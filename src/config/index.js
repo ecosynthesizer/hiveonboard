@@ -16,9 +16,18 @@ export const muiThemeConfig = {
   },
 };
 
+export const tos = [
+  "You have to agree to this terms of service:",
+  "- In order to prevent abuse & spam a verification of your phone number is required. Your data won't be used for any other purpose than that.",
+  "- In the process of account creation a meta-information will be put into your account, which will suggest default beneficiaries when creating a post. It's up to dApps to support this feature.",
+  "- The default beneficiaries meta-information proposes sharing a total of 5% of your rewards with accounts which referred you, funded the operation and provided this service.",
+  "- The default beneficiaries meta-information can be changed or removed entirely on a blockchain level at any time.",
+  "- Please beware of the fact, that removing this meta-information could result in loosing delegated HIVE POWER to your account from beneficiaries. It is recommended to obtain HIVE on your own and powering your account in this case.",
+];
+
 export const landingContent = [
   {
-    image: "images/social_hive_lets-talk-community.jpg",
+    image: "images/social_hive_lets-talk-community.png",
     overline: "What is HIVE?",
     heading: "Learn",
     text:
@@ -26,15 +35,15 @@ export const landingContent = [
     to: "/what-is-hive",
   },
   {
-    image: "images/social_hive_lets-talk-onboarding.jpg",
-    overline: "Create Account",
-    heading: "Get Onboard",
+    image: "images/social_hive_lets-talk-onboarding.png",
+    overline: "Get Onboard",
+    heading: "Create Account",
     text:
-      "Create a free HIVE account, start today and get engaged. The community is waiting for you!",
+      "Create a HIVE account, start today and get engaged. The community is waiting for you!",
     to: "/create-account",
   },
   {
-    image: "images/social_hive_lets-talk-dapps.jpg",
+    image: "images/social_hive_lets-talk-dapps.png",
     overline: "Discover dApps",
     heading: "Explore",
     text:
@@ -45,8 +54,8 @@ export const landingContent = [
 
 export const dApps = [
   {
-    icon: "peaked.svg",
-    name: "Peaked",
+    icon: "peakd.svg",
+    name: "PeakD",
     subtitle: "Full-featured blog",
     text: "The entry point for your decentralized world",
     url: "https://peakd.com",
@@ -66,10 +75,39 @@ export const dApps = [
     url: "https://3speak.online?utm_source=hiveonboard",
   },
   {
-    icon: "esteem.svg",
-    name: "Esteem",
+    icon: "ecency.png",
+    name: "Ecency",
     subtitle: "Device-friendly blog",
-    text: "Mobile & Desktop App for Hive",
-    url: "https://esteem.app",
+    text: "Rich & featured user experience across all devices",
+    url: "https://ecency.com/?referral=hiveonboard",
+  },
+  {
+    icon: "dapplr.jpg",
+    name: "dapplr",
+    subtitle: "Advanced mobile app",
+    text: "Incredible user experience on your smartphone",
+    url: "https://dapplr.in",
+  },
+  {
+    icon: "quello.png",
+    name: "quello.io",
+    subtitle: "Questions & Answers",
+    text: "Quello allows you to ask and answer questions and earn Hive",
+    url: "https://quello.io",
+  },
+  {
+    icon: "dbuzz.jpg",
+    name: "dbuzz.io",
+    subtitle: "Micro blogging",
+    text: "If you like twitter, you'll love dbuzz",
+    url: "https://d.buzz",
+  },
+  {
+    icon: "stemsocial.png",
+    name: "STEMsocial",
+    subtitle: "Curating content",
+    text:
+      "Curation project around science, technology, engineering & mathematics",
+    url: "https://stem.openhive.network",
   },
 ];

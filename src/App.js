@@ -1,10 +1,13 @@
 import React from "react";
+import createPersistedState from "use-persisted-state";
+import _ from "lodash";
 import {
   Route,
   Switch,
   Link as RouterLink,
   useLocation,
 } from "react-router-dom";
+import hivesigner from "hivesigner";
 import {
   makeStyles,
   createMuiTheme,
@@ -19,14 +22,18 @@ import Grid from "@material-ui/core/Grid";
 import Link from "@material-ui/core/Link";
 import Box from "@material-ui/core/Box";
 import Button from "@material-ui/core/Button";
+import IconButton from "@material-ui/core/IconButton";
+import Icon from "@material-ui/core/Icon";
+import Tooltip from "@material-ui/core/Tooltip";
 
 import { muiThemeConfig } from "./config";
-import HiveLogo from "./assets/hive_logo.png";
+import HiveLogo from "./assets/hiveonboard_logo_white.png";
 import HiveClaim from "./assets/hive_claim.png";
 import LandingPage from "./routes/LandingPage";
 import WhatIsHivePage from "./routes/WhatIsHivePage";
 import CreateAccountPage from "./routes/CreateAccountPage";
 import DAppsPage from "./routes/DAppsPage";
+import DashboardPage from "./routes/DashboardPage";
 
 const useStyles = makeStyles((theme) => ({
   container: {
@@ -50,14 +57,87 @@ const useStyles = makeStyles((theme) => ({
   button: {
     color: "#ffffff",
   },
+  avatarImg: {
+    width: 25,
+    height: 25,
+  },
 }));
 
-let theme = createMuiTheme(muiThemeConfig);
-theme = responsiveFontSizes(theme);
+const theme = responsiveFontSizes(createMuiTheme(muiThemeConfig));
+const useAccessTokenState = createPersistedState("accessToken");
+const useUsernameState = createPersistedState("username");
 
 function App() {
   const classes = useStyles();
   const location = useLocation();
+
+  const [accessToken, setAccessToken] = useAccessTokenState(null);
+  const [username, setUsername] = useUsernameState(null);
+  const [auth, setAuth] = React.useState(null);
+  const [userProfile, setUserProfile] = React.useState({});
+
+  const client = new hivesigner.Client({
+    app: "hiveonboard",
+    callbackURL: "http://hiveonboard.com/dashboard",
+    //callbackURL: "http://localhost:3000/dashboard",
+    scope: ["login"],
+    accessToken: [accessToken],
+  });
+
+  React.useEffect(() => {
+    const query = new URLSearchParams(location.search);
+
+    if (!_.isNil(query.get("access_token"))) {
+      setAccessToken(query.get("access_token"));
+    }
+
+    if (!_.isNil(query.get("username"))) {
+      setUsername(query.get("username"));
+    }
+  }, [location.search, setAccessToken, setUsername]);
+
+  React.useEffect(() => {
+    if (accessToken && username && !auth) {
+      client.me(function (err, res) {
+        if (err) {
+          setAuth(null);
+          setUserProfile({});
+        } else {
+          setAuth(res);
+
+          let userProfileCandidate = {};
+
+          userProfileCandidate.account = username;
+          userProfileCandidate.reputation = res.account.reputation;
+
+          try {
+            const profileJSON = JSON.parse(res.account.posting_json_metadata)
+              .profile;
+
+            if (profileJSON.hasOwnProperty("name")) {
+              userProfileCandidate.name = profileJSON.name;
+            }
+
+            if (profileJSON.hasOwnProperty("profile_image")) {
+              userProfileCandidate.profile_image = profileJSON.profile_image;
+            }
+
+            if (profileJSON.hasOwnProperty("about")) {
+              userProfileCandidate.about = profileJSON.about;
+            }
+
+            setUserProfile(userProfileCandidate);
+          } catch (error) {
+            userProfileCandidate.name = username;
+            userProfileCandidate.profile_image = "";
+            userProfileCandidate.about = "";
+
+            setUserProfile(userProfileCandidate);
+          }
+        }
+      });
+    }
+  }, [auth, accessToken, username, client]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -72,11 +152,17 @@ function App() {
               alignItems="center"
             >
               <Grid item>
-                <img
-                  className={classes.imageLogo}
-                  src={HiveLogo}
-                  alt="HIVE Logo"
-                />
+                <Button
+                  component={RouterLink}
+                  to={"/" + location.search}
+                  disabled={location.pathname === "/" ? true : false}
+                >
+                  <img
+                    className={classes.imageLogo}
+                    src={HiveLogo}
+                    alt="HIVE Logo"
+                  />
+                </Button>
               </Grid>
               <Grid item>
                 <img
@@ -88,26 +174,18 @@ function App() {
             </Grid>
           </Toolbar>
         </AppBar>
-        <Box className={classes.box} display="flex">
+        <Box
+          className={classes.box}
+          display="flex"
+          flexWrap="wrap"
+          alignItems="center"
+        >
           <Box>
             <Button
               className={classes.button}
-              size="large"
               color="secondary"
               component={RouterLink}
-              to="/"
-              disabled={location.pathname === "/" ? true : false}
-            >
-              Home
-            </Button>
-          </Box>
-          <Box>
-            <Button
-              className={classes.button}
-              size="large"
-              color="secondary"
-              component={RouterLink}
-              to="/what-is-hive"
+              to={"/what-is-hive" + location.search}
               disabled={location.pathname === "/what-is-hive" ? true : false}
             >
               Learn
@@ -116,32 +194,89 @@ function App() {
           <Box>
             <Button
               className={classes.button}
-              size="large"
               color="secondary"
               component={RouterLink}
-              to="/create-account"
+              to={"/create-account" + location.search}
               disabled={location.pathname === "/create-account" ? true : false}
             >
-              Get Onboard
+              Create Account
             </Button>
           </Box>
-          <Box>
+          <Box flexGrow={1}>
             <Button
               className={classes.button}
-              size="large"
               component={RouterLink}
-              to="/discover-dapps"
+              to={"/discover-dapps" + location.search}
               disabled={location.pathname === "/discover-dapps" ? true : false}
             >
               Explore
             </Button>
           </Box>
+          {!auth ? (
+            <Box>
+              <Button
+                className={classes.button}
+                size="large"
+                onClick={() => {
+                  client.login({});
+                }}
+              >
+                Referral Login
+              </Button>
+            </Box>
+          ) : (
+            <React.Fragment>
+              <Box>
+                <Button
+                  className={classes.button}
+                  component={RouterLink}
+                  to={"/dashboard" + location.search}
+                  disabled={location.pathname === "/dashboard" ? true : false}
+                >
+                  My Dashboard
+                </Button>
+              </Box>
+              <Box>
+                <Tooltip title="Logout">
+                  <IconButton
+                    size="small"
+                    className={classes.button}
+                    component={RouterLink}
+                    onClick={() => {
+                      client.revokeToken();
+                      setAccessToken(null);
+                      setAuth(null);
+                      setUserProfile({});
+                    }}
+                    to={"/"}
+                  >
+                    <Icon>exit_to_app</Icon>{" "}
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </React.Fragment>
+          )}
         </Box>
         <Switch>
           <Route path="/" exact component={LandingPage} />
-          <Route path="/what-is-hive" exact component={WhatIsHivePage} />
+          <Route
+            path="/what-is-hive"
+            exact
+            render={(props) => <WhatIsHivePage {...props} client={client} />}
+          />
           <Route path="/create-account" exact component={CreateAccountPage} />
           <Route path="/discover-dapps" exact component={DAppsPage} />
+          <Route
+            path="/dashboard"
+            exact
+            render={(props) => (
+              <DashboardPage
+                {...props}
+                accessToken={accessToken}
+                userProfile={userProfile}
+              />
+            )}
+          />
         </Switch>
         <AppBar className={classes.appBar} position="static">
           <Toolbar variant="dense">
@@ -152,7 +287,7 @@ function App() {
               alignItems="center"
             >
               <Grid item>
-                hiveonboard.com is sponsored by
+                hiveonboard.com -
                 <Link
                   className={classes.link}
                   target="_blank"
@@ -172,9 +307,25 @@ function App() {
                 <Link
                   className={classes.link}
                   target="_blank"
+                  href="https://hivesigner.com/sign/account-witness-vote?witness=roomservice&approve=1"
+                >
+                  Vote for Witness
+                </Link>
+                -
+                <Link
+                  className={classes.link}
+                  target="_blank"
                   href="https://github.com/christianfuerst/hiveonboard"
                 >
                   GitHub
+                </Link>
+                -
+                <Link
+                  className={classes.link}
+                  target="_blank"
+                  href="https://app.swaggerhub.com/apis-docs/christianfuerst/hiveonboard.com/1.0.0"
+                >
+                  API
                 </Link>
               </Grid>
             </Grid>

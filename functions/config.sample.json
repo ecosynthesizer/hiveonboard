@@ -1,5 +1,28 @@
 {
+  "provider": "INSERT-HIVE-ACCOUNT",
   "account": "INSERT-HIVE-ACCOUNT",
-  "password": "INSERT-HIVE-ACTIVE-KEY",
-  "rcThreshold": 30
+  "activeKey": "INSERT-HIVE-ACTIVE-KEY",
+  "accountLog": "INSERT-HIVE-ACCOUNT",
+  "activeKeyLog": "INSERT-HIVE-ACTIVE-KEY",
+  "rcThreshold": 30,
+  "creator_instances": [
+    {
+      "creator": "NAME-OF-WHALE-ACCOUNT",
+      "endpoint": "ENDPOINT-URI",
+      "apiKey": "YOUR-API-KEY"
+    }
+  ],
+  "fee": {
+    "referrer": 300,
+    "creator": 100,
+    "provider": 100
+  },
+  "badgeOne": "INSERT-HIVE-ACCOUNT",
+  "activeKeyBadgeOne": "INSERT-HIVE-ACTIVE-KEY",
+  "badgeTwo": "INSERT-HIVE-ACCOUNT",
+  "activeKeyBadgeTwo": "INSERT-HIVE-ACTIVE-KEY",
+  "badgeThree": "INSERT-HIVE-ACCOUNT",
+  "activeKeyBadgeThree": "INSERT-HIVE-ACTIVE-KEY",
+  "ticketApiKey": "YOUR-TICKET-API-KEY",
+  "defaultDelegation": "10000.000000 VESTS"
 }

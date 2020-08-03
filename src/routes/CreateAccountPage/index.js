@@ -1,4 +1,8 @@
 import React from "react";
+import axios from "axios";
+import _ from "lodash";
+import hive from "@hiveio/hive-js";
+import { useLocation } from "react-router-dom";
 import { useFirestore, useFirestoreDocData } from "reactfire";
 import { makeStyles } from "@material-ui/core/styles";
 import Grid from "@material-ui/core/Grid";
@@ -9,7 +13,6 @@ import Card from "@material-ui/core/Card";
 import CardContent from "@material-ui/core/CardContent";
 import Chip from "@material-ui/core/Chip";
 import Icon from "@material-ui/core/Icon";
-import Tooltip from "@material-ui/core/Tooltip";
 import Alert from "@material-ui/lab/Alert";
 import AlertTitle from "@material-ui/lab/AlertTitle";
 import Link from "@material-ui/core/Link";
@@ -31,19 +34,89 @@ const useStyles = makeStyles((theme) => ({
   chip: {
     margin: theme.spacing(0.5, 0, 0.5, 0),
   },
+  alert: {
+    margin: theme.spacing(2),
+  },
 }));
 
 const CreateAccountPage = () => {
   const classes = useStyles();
+  const location = useLocation();
   const firestore = useFirestore();
   const publicData = useFirestoreDocData(firestore.doc("public/data"));
 
+  const [accountTickets, setAccountTickets] = React.useState(0);
+  const [referrer, setReferrer] = React.useState(null);
+  const [referrerAccount, setReferrerAccount] = React.useState(null);
+  const [creator, setCreator] = React.useState(null);
+  const [redirectUrl, setRedirectUrl] = React.useState(null);
+  const [ticket, setTicket] = React.useState(null);
+  const [debugMode, setDebugMode] = React.useState(false);
+
   const [activeStep, setActiveStep] = React.useState(0);
-  const [account, setAccount] = React.useState({});
+  const [account, setAccount] = React.useState({ username: "" });
   const steps = getSteps();
 
+  React.useEffect(() => {
+    const query = new URLSearchParams(location.search);
+
+    if (!_.isNil(query.get("ref"))) {
+      hive.api.getAccounts([query.get("ref")], function (err, result) {
+        if (result) {
+          if (result.length === 1) {
+            setReferrer(query.get("ref"));
+            setReferrerAccount(result[0]);
+          }
+        }
+      });
+    }
+    if (!_.isNil(query.get("creator"))) {
+      setCreator(query.get("creator"));
+    }
+    if (!_.isNil(query.get("redirect_url"))) {
+      setRedirectUrl(query.get("redirect_url"));
+    }
+    if (!_.isNil(query.get("ticket"))) {
+      setTicket(query.get("ticket"));
+    }
+    if (!_.isNil(query.get("account_name"))) {
+      setAccount({ username: query.get("account_name") });
+    }
+    if (!_.isNil(query.get("debug_mode"))) {
+      setDebugMode(query.get("debug_mode"));
+    }
+  }, [location.search]);
+
+  React.useEffect(() => {
+    if (typeof publicData !== "undefined") {
+      var tickets = publicData.accountTickets;
+
+      if (publicData.creators) {
+        publicData.creators.forEach((element) => {
+          if (element.available) {
+            tickets = tickets + element.accountTickets;
+          }
+        });
+      }
+
+      setAccountTickets(tickets);
+    }
+  }, [publicData]);
+
+  React.useEffect(() => {
+    if (ticket) {
+      axios
+        .get("https://hiveonboard.com/api/tickets/" + ticket)
+        .then(function (response) {
+          if (response.data.valid === false) {
+            setTicket("invalid");
+          }
+        });
+    }
+  }, [ticket]);
+
   function getSteps() {
-    return ["Choose your account", "Backup your account", "Choose your dapp"];
+    return ["Choose your account", "Backup your account", "Choose your dApp"];
   }
 
   function getStepContent(step) {
@@ -52,7 +125,14 @@ const CreateAccountPage = () => {
         return (
           <ChooseAccount
             setActiveStep={setActiveStep}
+            account={account}
             setAccount={setAccount}
+            referrerAccount={referrerAccount}
+            setReferrerAccount={setReferrerAccount}
+            referrer={referrer}
+            setReferrer={setReferrer}
+            ticket={ticket}
+            setTicket={setTicket}
           />
         );
       case 1:
@@ -61,10 +141,20 @@ const CreateAccountPage = () => {
             setActiveStep={setActiveStep}
             setAccount={setAccount}
             account={account}
+            referrer={referrer}
+            creator={creator}
+            ticket={ticket}
+            debugMode={debugMode}
           />
         );
       case 2:
-        return <ChooseDApp />;
+        return (
+          <ChooseDApp
+            account={account}
+            redirectUrl={redirectUrl}
+            debugMode={debugMode}
+          />
+        );
       default:
         return "Unknown step";
     }
@@ -82,30 +172,13 @@ const CreateAccountPage = () => {
             spacing={2}
           >
             <Grid item xs={12}>
-              {publicData.accountTickets === 0 ? (
-                <Tooltip
-                  enterTouchDelay={0}
-                  title={`Current supply: ${publicData.accountTickets} accounts`}
-                >
-                  <Chip
-                    className={classes.chip}
-                    color="primary"
-                    label="Service Unavailable"
-                    icon={<Icon>error</Icon>}
-                  />
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  enterTouchDelay={0}
-                  title={`Current supply: ${publicData.accountTickets} accounts`}
-                >
-                  <Chip
-                    className={classes.chip}
-                    color="secondary"
-                    label="Service Available"
-                    icon={<Icon>done</Icon>}
-                  />
-                </Tooltip>
+              {accountTickets === 0 && (
+                <Chip
+                  className={classes.chip}
+                  color="primary"
+                  label="Service Unavailable"
+                  icon={<Icon>error</Icon>}
+                />
               )}
             </Grid>
             <Grid item xs={12}>
@@ -120,7 +193,7 @@ const CreateAccountPage = () => {
               </Stepper>
             </Grid>
             <Grid item xs={12}>
-              {publicData.accountTickets === 0 ? (
+              {accountTickets === 0 ? (
                 <Alert className={classes.alert} severity="info">
                   <AlertTitle>Service Unvailable</AlertTitle>
                   We are currently out of account creation tickets. Check back

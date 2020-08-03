@@ -1,6 +1,12 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
-const dhive = require("@hivechain/dhive");
+const axios = require("axios").default;
+const dhive = require("@hiveio/dhive");
+const hivesigner = require("hivesigner");
+const express = require("express");
+const cors = require("cors");
+const _ = require("lodash");
+const CryptoJS = require("crypto-js");
 const config = require("./config.json");
 
 admin.initializeApp();
@@ -13,82 +19,323 @@ let client = new dhive.Client([
   "https://api.openhive.network",
 ]);
 
-let key = dhive.PrivateKey.fromLogin(config.account, config.password, "active");
+let key = dhive.PrivateKey.fromString(config.activeKey);
+let keyLog = dhive.PrivateKey.fromString(config.activeKeyLog);
 
-// Use this function for production
+const getRandomArbitrary = (min, max) => {
+  return Math.random() * (max - min) + min;
+};
+
 exports.createAccount = functions.https.onCall(async (data, context) => {
-  let oneWeekAgo = admin.firestore.Timestamp.fromDate(
-    new Date(Date.now() - 604800000)
-  );
+  let ticket = data.ticket;
+  let phoneNumberHashObject = CryptoJS.SHA256("No Phone Number");
+  let referrer = data.referrer;
+  let creator = config.account;
+  let provider = config.provider;
+  let beneficiaries = [];
 
-  let accountsRef = db.collection("accounts");
-  let query = await accountsRef
-    .where("ipAddress", "==", context.rawRequest.ip)
-    .where("timestamp", ">", oneWeekAgo)
-    .get();
+  if (ticket) {
+    let ticketRef = db.collection("tickets").doc(ticket);
+    let ticketDoc = await ticketRef.get();
 
-  if (!query.empty) {
-    return {
-      error: "Your IP was recently used for account creation.",
-    };
+    if (ticketDoc.exists) {
+      let ticketData = ticketDoc.data();
+      if (ticketData.consumed) {
+        console.log("Ticket already consumed.");
+        return {
+          error: "Ticket already consumed.",
+        };
+      }
+    } else {
+      console.log("Ticket is invalid.");
+      return {
+        error: "Ticket is invalid.",
+      };
+    }
+  } else {
+    ticket = "NO TICKET";
+    let oneWeekAgo = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 604800000)
+    );
+
+    if (!context.auth.hasOwnProperty("uid")) {
+      console.log("Verficiation failed.");
+      return {
+        error: "Verficiation failed.",
+      };
+    }
+
+    let accountsRef = db.collection("accounts");
+    let query = await accountsRef
+      .where("ipAddress", "==", context.rawRequest.ip)
+      .where("timestamp", ">", oneWeekAgo)
+      .get();
+
+    if (!query.empty) {
+      // Delete user including phone number
+      if (context.hasOwnProperty("auth")) {
+        await admin.auth().deleteUser(context.auth.uid);
+      }
+      console.log("IP was recently used for account creation.");
+      return {
+        error: "Your IP was recently used for account creation.",
+      };
+    }
+
+    phoneNumberHashObject = CryptoJS.SHA256(context.auth.token.phone_number);
+
+    let queryUser = await accountsRef
+      .where(
+        "phoneNumberHash",
+        "==",
+        phoneNumberHashObject.toString(CryptoJS.enc.Hex)
+      )
+      .get();
+
+    if (!queryUser.empty) {
+      // Delete user including phone number
+      if (context.hasOwnProperty("auth")) {
+        await admin.auth().deleteUser(context.auth.uid);
+      }
+      console.log(
+        "Phone number (" +
+          phoneNumberHashObject.toString(CryptoJS.enc.Hex) +
+          ") was already used for account creation."
+      );
+      return {
+        error: "Your phone number was already used for account creation.",
+      };
+    }
   }
 
-  return {
-    error:
-      "The service is in maintenance. We gotta implement some anti abuse mechanics right now.",
-  };
+  let publicRef = db.collection("public");
+  let queryCreators = await publicRef.doc("data").get();
+  let creators = queryCreators.data().creators;
+  let creatorCandidate = null;
 
-  const ownerAuth = {
-    weight_threshold: 1,
-    account_auths: [],
-    key_auths: [[data.publicKeys.owner, 1]],
-  };
-  const activeAuth = {
-    weight_threshold: 1,
-    account_auths: [],
-    key_auths: [[data.publicKeys.active, 1]],
-  };
-  const postingAuth = {
-    weight_threshold: 1,
-    account_auths: [],
-    key_auths: [[data.publicKeys.posting, 1]],
-  };
-
-  const op = [
-    "create_claimed_account",
-    {
-      creator: config.account,
-      new_account_name: data.username,
-      owner: ownerAuth,
-      active: activeAuth,
-      posting: postingAuth,
-      memo_key: data.publicKeys.memo,
-      json_metadata: "",
-      extensions: [],
-    },
-  ];
-
-  try {
-    await client.broadcast.sendOperations([op], key);
-  } catch (error) {
-    return {
-      error: error,
-    };
-  }
-
-  await db.collection("accounts").doc(data.username).set({
-    accountName: data.username,
-    ipAddress: context.rawRequest.ip,
-    timestamp: new Date(),
-    voted: false,
-    posted: false,
+  // Look up a creator with the most tickets available, prefer a creator if passed in
+  creators.forEach((element) => {
+    if (
+      element.accountTickets > 0 &&
+      element.available &&
+      data.creator === element.account
+    ) {
+      creatorCandidate = element;
+      let creatorConfig = _.find(config.creator_instances, {
+        creator: element.account,
+      });
+      creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+    } else if (element.accountTickets > 0 && element.available) {
+      if (creatorCandidate) {
+        if (element.accountTickets > creatorCandidate.accountTickets) {
+          creatorCandidate = element;
+          let creatorConfig = _.find(config.creator_instances, {
+            creator: element.account,
+          });
+          creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+        }
+      } else {
+        creatorCandidate = element;
+        let creatorConfig = _.find(config.creator_instances, {
+          creator: element.account,
+        });
+        creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+      }
+    }
   });
 
-  return data;
-});
+  // Double-Check if the remote instance is up and running
+  let endpointCheck;
+  try {
+    endpointCheck = await axios.get(creatorCandidate.endpoint);
+  } catch (error) {
+    endpointCheck = false;
+    console.log("Remote creator instance is offline.");
+  }
 
-// Use this function for development
-exports.createFakeAccount = functions.https.onCall(async (data, context) => {
+  if (creatorCandidate && endpointCheck) {
+    // Creator instance available
+    try {
+      creator = creatorCandidate.account;
+
+      // Build the custom_json beneficiaries array
+      if (referrer) {
+        beneficiaries.push({
+          name: referrer,
+          weight: config.fee.referrer,
+          label: "referrer",
+        });
+      }
+      if (creator) {
+        beneficiaries.push({
+          name: creator,
+          weight: config.fee.creator,
+          label: "creator",
+        });
+      }
+      if (provider) {
+        beneficiaries.push({
+          name: provider,
+          weight: config.fee.provider,
+          label: "provider",
+        });
+      }
+
+      let postBody = {
+        name: data.username,
+        publicKeys: data.publicKeys,
+        metaData: {
+          beneficiaries: beneficiaries,
+        },
+      };
+
+      if (creator === data.creator) {
+        postBody.creator = creator;
+      }
+
+      let postRequest = await axios.post(
+        creatorCandidate.endpoint + "/createAccount",
+        postBody,
+        {
+          headers: {
+            authority: creatorCandidate.apiKey,
+          },
+        }
+      );
+
+      if (postRequest.created === false) {
+        // Delete user including phone number
+        if (context.hasOwnProperty("auth")) {
+          await admin.auth().deleteUser(context.auth.uid);
+        }
+        console.log("Account creation on remote creator instance failed.");
+        return { error: "Account creation on remote creator instance failed." };
+      }
+    } catch (error) {
+      // Delete user including phone number
+      if (context.hasOwnProperty("auth")) {
+        await admin.auth().deleteUser(context.auth.uid);
+      }
+      console.log("Remote creator instance is offline.");
+      return { error: "Remote creator instance is offline." };
+    }
+  } else {
+    // No creator instance available, we have to create ourself
+    const ownerAuth = {
+      weight_threshold: 1,
+      account_auths: [],
+      key_auths: [[data.publicKeys.owner, 1]],
+    };
+    const activeAuth = {
+      weight_threshold: 1,
+      account_auths: [],
+      key_auths: [[data.publicKeys.active, 1]],
+    };
+    const postingAuth = {
+      weight_threshold: 1,
+      account_auths: [],
+      key_auths: [[data.publicKeys.posting, 1]],
+    };
+
+    // Build the custom_json beneficiaries array
+    if (referrer) {
+      beneficiaries.push({
+        name: referrer,
+        weight: config.fee.referrer,
+        label: "referrer",
+      });
+    }
+    if (creator) {
+      beneficiaries.push({
+        name: creator,
+        weight: config.fee.creator,
+        label: "creator",
+      });
+    }
+    if (provider) {
+      beneficiaries.push({
+        name: provider,
+        weight: config.fee.provider,
+        label: "provider",
+      });
+    }
+
+    const op = [
+      "create_claimed_account",
+      {
+        creator: config.account,
+        new_account_name: data.username,
+        owner: ownerAuth,
+        active: activeAuth,
+        posting: postingAuth,
+        memo_key: data.publicKeys.memo,
+        json_metadata: JSON.stringify({
+          beneficiaries: beneficiaries,
+        }),
+        extensions: [],
+      },
+    ];
+
+    try {
+      await client.broadcast.sendOperations([op], key);
+    } catch (error) {
+      // Delete user including phone number
+      if (context.hasOwnProperty("auth")) {
+        await admin.auth().deleteUser(context.auth.uid);
+      }
+      console.log("Account creation on backup instance failed.");
+      return { error: "Account creation on backup instance failed." };
+    }
+  }
+
+  let accountData = {
+    accountName: data.username,
+    ipAddress: context.rawRequest.ip,
+    phoneNumberHash: phoneNumberHashObject.toString(CryptoJS.enc.Hex),
+    timestamp: new Date(),
+    posted: false,
+    referrer: referrer,
+    creator: creator,
+    provider: provider,
+    delegation: true,
+    ticket: ticket,
+  };
+
+  await db.collection("accounts").doc(data.username).set(accountData);
+
+  // Delete user including phone number
+  if (context.hasOwnProperty("auth")) {
+    await admin.auth().deleteUser(context.auth.uid);
+  }
+
+  // Set ticket to consumed
+  if (ticket) {
+    await db
+      .collection("tickets")
+      .doc(ticket)
+      .set({ consumed: true, consumedBy: data.username }, { merge: true });
+  }
+
+  // HP delegation
+  try {
+    await client.broadcast.delegateVestingShares(
+      {
+        delegatee: data.username,
+        delegator: config.account,
+        vesting_shares: config.defaultDelegation,
+      },
+      key
+    );
+  } catch (error) {
+    await db
+      .collection("accounts")
+      .doc(data.username)
+      .set({ delegation: false }, { merge: true });
+    console.log("Delegation for " + data.username + " failed.");
+  }
+
+  console.log(JSON.stringify(accountData));
+
   return data;
 });
 
@@ -116,16 +363,96 @@ exports.claimAccounts = functions.pubsub
         await client.broadcast.sendOperations([op], key);
       }
 
-      let account = await client.database.getAccounts([config.account]);
+      // Update account
+      let accountResponse = await client.database.getAccounts([config.account]);
 
-      if (account[0].hasOwnProperty("pending_claimed_accounts")) {
+      if (accountResponse[0].hasOwnProperty("pending_claimed_accounts")) {
         await db
           .collection("public")
           .doc("data")
-          .set({ accountTickets: account[0].pending_claimed_accounts });
+          .set(
+            { accountTickets: accountResponse[0].pending_claimed_accounts },
+            { merge: true }
+          );
       }
+
+      // Update creator_instances
+      if (config.creator_instances.length > 0) {
+        let accounts = [];
+        let instances = {};
+
+        await Promise.all(
+          config.creator_instances.map(async (object) => {
+            try {
+              await axios.get(object.endpoint);
+              instances[object.creator] = true;
+            } catch (error) {
+              instances[object.creator] = false;
+            }
+          })
+        );
+
+        config.creator_instances.forEach((element) => {
+          accounts.push(element.creator);
+        });
+
+        let accountsResponse = await client.database.getAccounts(accounts);
+        let creators = [];
+
+        accountsResponse.forEach((element) => {
+          if (element.hasOwnProperty("pending_claimed_accounts")) {
+            creators.push({
+              account: element.name,
+              accountTickets: element.pending_claimed_accounts,
+              available: instances[element.name],
+            });
+          }
+        });
+
+        await db
+          .collection("public")
+          .doc("data")
+          .set({ creators: creators }, { merge: true });
+      }
+
+      // Remove HP delegation after 1 week
+      let oneWeekAgo = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() - 604800000)
+      );
+
+      let accountsRef = db.collection("accounts");
+      let query = await accountsRef
+        .where("delegation", "==", true)
+        .where("timestamp", "<", oneWeekAgo)
+        .get();
+
+      query.forEach((element) => {
+        try {
+          _.delay(() => {
+            console.log("Removing Delegation: " + element.id);
+            client.broadcast
+              .delegateVestingShares(
+                {
+                  delegatee: element.id,
+                  delegator: config.account,
+                  vesting_shares: "0.000000 VESTS",
+                },
+                key
+              )
+              .then(() => {
+                accountsRef
+                  .doc(element.id)
+                  .set({ delegation: false }, { merge: true });
+              });
+          }, getRandomArbitrary(0, 100000));
+        } catch (error) {
+          console.log("Removing delegation Error", error);
+          throw new Error(error);
+        }
+      });
     } catch (error) {
       console.log(error);
+      throw new Error(error);
     }
   });
 
@@ -150,12 +477,12 @@ exports.postAccountCreationReport = functions.pubsub
     let permlink =
       "account-creation-report-" + today.toISOString().substring(0, 10);
     let body =
-      ("This is an automatic generated account creation report from @" +
-        config.account +
-        ".\n") &
-      "![badge_poweredbyhive_dark_240.png](https://files.peakd.com/file/peakd-hive/hiveonboard/SkMbcWod-badge_powered-by-hive_dark_240.png)\n" &
-      "|Account|Creation Time|\n|-|-|\n";
-    let tag = "steemonboard";
+      "This is an automatic generated account creation report from @" +
+      config.provider +
+      ".\n" +
+      "![badge_poweredbyhive_dark_240.png](https://files.peakd.com/file/peakd-hive/hiveonboard/SkMbcWod-badge_powered-by-hive_dark_240.png)\n" +
+      "|Account|Referrer|Creation Time|\n|-|-|-|\n";
+    let tag = "hiveonboard";
     let json_metadata = JSON.stringify({ tags: [tag] });
 
     query.forEach((doc) => {
@@ -165,6 +492,8 @@ exports.postAccountCreationReport = functions.pubsub
         body +
         "|@" +
         account.accountName +
+        "|@" +
+        account.referrer +
         "|" +
         timestamp.toISOString() +
         "|\n";
@@ -178,9 +507,9 @@ exports.postAccountCreationReport = functions.pubsub
     });
 
     try {
-      await client.broadcast.comment(
+      await client.broadcast.commentWithOptions(
         {
-          author: config.account,
+          author: config.accountLog,
           body: body,
           json_metadata: json_metadata,
           parent_author: "",
@@ -188,9 +517,622 @@ exports.postAccountCreationReport = functions.pubsub
           permlink: permlink,
           title: title,
         },
-        key
+        {
+          author: config.accountLog,
+          permlink: permlink,
+          allow_votes: true,
+          allow_curation_rewards: true,
+          max_accepted_payout: "1000000.000 HBD",
+          percent_steem_dollars: 10000,
+          extensions: [
+            [
+              0,
+              { beneficiaries: [{ account: config.provider, weight: 10000 }] },
+            ],
+          ],
+        },
+        keyLog
       );
     } catch (error) {
       console.log(error);
     }
   });
+
+exports.addReferrals = functions.firestore
+  .document("referrals/{referralId}")
+  .onCreate(async (snap, context) => {
+    let referral = snap.data();
+    let increment = admin.firestore.FieldValue.increment(1);
+
+    try {
+      if (referral.hasOwnProperty("referrer")) {
+        await db
+          .collection("referralsCount")
+          .doc(referral.referrer.name)
+          .set({ referrerCount: increment }, { merge: true });
+      }
+
+      if (referral.hasOwnProperty("provider")) {
+        await db
+          .collection("referralsCount")
+          .doc(referral.provider.name)
+          .set({ providerCount: increment }, { merge: true });
+      }
+
+      if (referral.hasOwnProperty("creator")) {
+        await db
+          .collection("referralsCount")
+          .doc(referral.creator.name)
+          .set({ creatorCount: increment }, { merge: true });
+      }
+
+      return true;
+    } catch (error) {
+      console.log(error);
+      return false;
+    }
+  });
+
+exports.updateReferralsCount = functions.firestore
+  .document("referralsCount/{referralId}")
+  .onUpdate(async (change, context) => {
+    let referral = change.after.data();
+    let keyBadgeOne = dhive.PrivateKey.fromString(config.activeKeyBadgeOne);
+    let keyBadgeTwo = dhive.PrivateKey.fromString(config.activeKeyBadgeTwo);
+    let keyBadgeThree = dhive.PrivateKey.fromString(config.activeKeyBadgeThree);
+
+    try {
+      if (referral.hasOwnProperty("referrerCount")) {
+        if (referral.referrerCount >= 10 && referral.referrerCount < 100) {
+          if (!referral.hasOwnProperty("badge")) {
+            // Add BadgeOne
+            let jsonData = [
+              "follow",
+              {
+                follower: config.badgeOne,
+                following: change.after.id,
+                what: ["blog"],
+              },
+            ];
+
+            await client.broadcast.json(
+              {
+                required_auths: [],
+                required_posting_auths: [config.badgeOne],
+                id: "follow",
+                json: JSON.stringify(jsonData),
+              },
+              keyBadgeOne
+            );
+
+            await db
+              .collection("referralsCount")
+              .doc(change.after.id)
+              .set({ badge: config.badgeOne }, { merge: true });
+          }
+        }
+
+        if (referral.referrerCount >= 100 && referral.referrerCount < 1000) {
+          if (referral.badge === config.badgeOne) {
+            // Remove BadgeOne & Add BadgeTwo
+            let jsonData = [
+              "follow",
+              {
+                follower: config.badgeOne,
+                following: change.after.id,
+                what: [],
+              },
+            ];
+
+            await client.broadcast.json(
+              {
+                required_auths: [],
+                required_posting_auths: [config.badgeOne],
+                id: "follow",
+                json: JSON.stringify(jsonData),
+              },
+              keyBadgeOne
+            );
+
+            jsonData = [
+              "follow",
+              {
+                follower: config.badgeTwo,
+                following: change.after.id,
+                what: ["blog"],
+              },
+            ];
+
+            await client.broadcast.json(
+              {
+                required_auths: [],
+                required_posting_auths: [config.badgeTwo],
+                id: "follow",
+                json: JSON.stringify(jsonData),
+              },
+              keyBadgeTwo
+            );
+
+            await db
+              .collection("referralsCount")
+              .doc(change.after.id)
+              .set({ badge: config.badgeTwo }, { merge: true });
+          }
+        }
+
+        if (referral.referrerCount >= 1000) {
+          if (referral.badge === config.badgeTwo) {
+            // Remove BadgeTwo & Add BadgeThree
+            let jsonData = [
+              "follow",
+              {
+                follower: config.badgeTwo,
+                following: change.after.id,
+                what: [],
+              },
+            ];
+
+            await client.broadcast.json(
+              {
+                required_auths: [],
+                required_posting_auths: [config.badgeTwo],
+                id: "follow",
+                json: JSON.stringify(jsonData),
+              },
+              keyBadgeTwo
+            );
+
+            jsonData = [
+              "follow",
+              {
+                follower: config.badgeThree,
+                following: change.after.id,
+                what: ["blog"],
+              },
+            ];
+
+            await client.broadcast.json(
+              {
+                required_auths: [],
+                required_posting_auths: [config.badgeThree],
+                id: "follow",
+                json: JSON.stringify(jsonData),
+              },
+              keyBadgeThree
+            );
+
+            await db
+              .collection("referralsCount")
+              .doc(change.after.id)
+              .set({ badge: config.badgeThree }, { merge: true });
+          }
+        }
+      }
+    } catch (error) {
+      console.log(error);
+      return false;
+    }
+  });
+
+let app = express();
+app.use(cors());
+
+app.get("/api/referrer/:account", async (req, res) => {
+  let items = [];
+  let refSize = db.collection("referralsCount");
+  let ref = db.collection("referrals");
+
+  let offset = 0;
+  let limit = 20;
+  let size = 0;
+  let orderBy = admin.firestore.FieldPath.documentId();
+
+  if (req.query.hasOwnProperty("orderBy")) {
+    switch (req.query.orderBy) {
+      case "account":
+        orderBy = admin.firestore.FieldPath.documentId();
+        break;
+      case "weight":
+        orderBy = "referrer.weight";
+        break;
+      case "timestamp":
+        orderBy = "referrer.timestamp";
+        break;
+      default:
+        res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("offset")) {
+    if (Number.isInteger(parseInt(req.query.offset))) {
+      offset = parseInt(req.query.offset);
+    } else {
+      res.status(400).json({ error: "Invalid offset parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("limit")) {
+    if (Number.isInteger(parseInt(req.query.limit))) {
+      limit = parseInt(req.query.limit);
+    } else {
+      res.status(400).json({ error: "Invalid limit parameter" });
+    }
+  }
+
+  let querySize = await refSize
+    .where(admin.firestore.FieldPath.documentId(), "==", req.params.account)
+    .get();
+
+  querySize.forEach((doc) => {
+    let referralsCount = doc.data();
+    size = referralsCount.referrerCount;
+  });
+
+  let query = await ref
+    .where("referrer.name", "==", req.params.account)
+    .orderBy(orderBy)
+    .limit(limit)
+    .offset(offset)
+    .get();
+
+  query.forEach((doc) => {
+    let data = doc.data();
+    items.push({
+      account: doc.id,
+      weight: data.referrer.weight,
+      timestamp: data.referrer.timestamp._seconds * 1000,
+    });
+  });
+
+  res.json({ items: items, limit: limit, offset: offset, size: size });
+});
+
+app.get("/api/provider/:account", async (req, res) => {
+  let items = [];
+  let refSize = db.collection("referralsCount");
+  let ref = db.collection("referrals");
+
+  let offset = 0;
+  let limit = 20;
+  let size = 0;
+  let orderBy = admin.firestore.FieldPath.documentId();
+
+  if (req.query.hasOwnProperty("orderBy")) {
+    switch (req.query.orderBy) {
+      case "account":
+        orderBy = admin.firestore.FieldPath.documentId();
+        break;
+      case "weight":
+        orderBy = "provider.weight";
+        break;
+      case "timestamp":
+        orderBy = "provider.timestamp";
+        break;
+      default:
+        res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("offset")) {
+    if (Number.isInteger(parseInt(req.query.offset))) {
+      offset = parseInt(req.query.offset);
+    } else {
+      res.status(400).json({ error: "Invalid offset parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("limit")) {
+    if (Number.isInteger(parseInt(req.query.limit))) {
+      limit = parseInt(req.query.limit);
+    } else {
+      res.status(400).json({ error: "Invalid limit parameter" });
+    }
+  }
+
+  let querySize = await refSize
+    .where(admin.firestore.FieldPath.documentId(), "==", req.params.account)
+    .get();
+
+  querySize.forEach((doc) => {
+    let referralsCount = doc.data();
+    size = referralsCount.providerCount;
+  });
+
+  let query = await ref
+    .where("provider.name", "==", req.params.account)
+    .orderBy(orderBy)
+    .limit(limit)
+    .offset(offset)
+    .get();
+
+  query.forEach((doc) => {
+    let data = doc.data();
+    items.push({
+      account: doc.id,
+      weight: data.provider.weight,
+      timestamp: data.provider.timestamp._seconds * 1000,
+    });
+  });
+
+  res.json({ items: items, limit: limit, offset: offset, size: size });
+});
+
+app.get("/api/creator/:account", async (req, res) => {
+  let items = [];
+  let refSize = db.collection("referralsCount");
+  let ref = db.collection("referrals");
+
+  let offset = 0;
+  let limit = 20;
+  let size = 0;
+  let orderBy = admin.firestore.FieldPath.documentId();
+
+  if (req.query.hasOwnProperty("orderBy")) {
+    switch (req.query.orderBy) {
+      case "account":
+        orderBy = admin.firestore.FieldPath.documentId();
+        break;
+      case "weight":
+        orderBy = "creator.weight";
+        break;
+      case "timestamp":
+        orderBy = "creator.timestamp";
+        break;
+      default:
+        res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("offset")) {
+    if (Number.isInteger(parseInt(req.query.offset))) {
+      offset = parseInt(req.query.offset);
+    } else {
+      res.status(400).json({ error: "Invalid offset parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("limit")) {
+    if (Number.isInteger(parseInt(req.query.limit))) {
+      limit = parseInt(req.query.limit);
+    } else {
+      res.status(400).json({ error: "Invalid limit parameter" });
+    }
+  }
+
+  let querySize = await refSize
+    .where(admin.firestore.FieldPath.documentId(), "==", req.params.account)
+    .get();
+
+  querySize.forEach((doc) => {
+    let referralsCount = doc.data();
+    size = referralsCount.creatorCount;
+  });
+
+  let query = await ref
+    .where("creator.name", "==", req.params.account)
+    .orderBy(orderBy)
+    .limit(limit)
+    .offset(offset)
+    .get();
+
+  query.forEach((doc) => {
+    let data = doc.data();
+    items.push({
+      account: doc.id,
+      weight: data.creator.weight,
+      timestamp: data.creator.timestamp._seconds * 1000,
+    });
+  });
+
+  res.json({ items: items, limit: limit, offset: offset, size: size });
+});
+
+app.get("/api/tickets/:ticket", async (req, res) => {
+  let ref = db.collection("tickets").doc(req.params.ticket);
+  let doc = await ref.get();
+
+  if (doc.exists) {
+    let ticket = doc.data();
+    if (ticket.consumed) {
+      res.json({ valid: false });
+    } else {
+      res.json({ valid: true });
+    }
+  } else {
+    res.json({ valid: false });
+  }
+});
+
+app.get("/api/tickets", async (req, res) => {
+  if (req.query.hasOwnProperty("accessToken")) {
+    let hivesignerClient = new hivesigner.Client({
+      app: "hiveonboard",
+      callbackURL: "http://hiveonboard.com/dashboard",
+      scope: ["login"],
+      accessToken: [req.query.accessToken],
+    });
+
+    hivesignerClient.me(async function (error, result) {
+      if (error) {
+        console.log(
+          "GET request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
+            req.ip
+        );
+        res.status(401).send("Invalid access token.");
+      } else {
+        let items = [];
+        let size = 0;
+
+        let ref = db.collection("tickets");
+        let query = await ref.where("referrer", "==", result.user).get();
+
+        query.forEach((doc) => {
+          let data = doc.data();
+          items.push(data);
+          size += 1;
+        });
+
+        let referralRef = db.collection("referralsCount").doc(result.user);
+        let referralDoc = await referralRef.get();
+        let isVip = false;
+        let lastTicketRequest = 0;
+
+        if (referralDoc.exists) {
+          let referral = referralDoc.data();
+          if (referral.lastTicketRequest) {
+            lastTicketRequest = referral.lastTicketRequest.toMillis();
+          }
+          if (referral.isVip) {
+            isVip = referral.isVip;
+          }
+        }
+
+        res.json({
+          items: items,
+          size: size,
+          lastTicketRequest: lastTicketRequest,
+          isVip: isVip,
+        });
+      }
+    });
+  } else {
+    console.log(
+      "GET request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
+        req.ip
+    );
+    res.status(401).send("Invalid access token.");
+  }
+});
+
+app.post("/api/tickets", async (req, res) => {
+  function create_UUID() {
+    var dt = new Date().getTime();
+    var uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+      /[xy]/g,
+      function (c) {
+        var r = (dt + Math.random() * 16) % 16 | 0;
+        dt = Math.floor(dt / 16);
+        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+      }
+    );
+    return uuid;
+  }
+
+  function ticketClaimIsValid(referral) {
+    if (referral.isVip) {
+      return true;
+    } else {
+      if (referral.referrerCount && referral.referrerCount >= 10) {
+        if (referral.lastTicketRequest) {
+          let cooldown = 7 * 24 * 60 * 60 * 1000;
+
+          if (referral.referrerCount >= 100 && referral.referrerCount < 1000) {
+            cooldown = cooldown / 7;
+          }
+
+          if (referral.referrerCount >= 1000) {
+            cooldown = cooldown / 7 / 24;
+          }
+
+          let lastDate = referral.lastTicketRequest.toDate();
+          let minDate = new Date(lastDate.getTime() + cooldown);
+          let nowDate = new Date();
+
+          if (minDate < nowDate) {
+            return true;
+          } else {
+            return false;
+          }
+        } else {
+          return true;
+        }
+      } else {
+        return false;
+      }
+    }
+  }
+
+  if (req.body.accessToken) {
+    let hivesignerClient = new hivesigner.Client({
+      app: "hiveonboard",
+      callbackURL: "http://hiveonboard.com/dashboard",
+      scope: ["login"],
+      accessToken: [req.body.accessToken],
+    });
+
+    let creatorInstance = _.find(config.creator_instances, {
+      apiKey: req.body.accessToken,
+    });
+
+    if (creatorInstance) {
+      let ref = db.collection("referralsCount").doc(creatorInstance.creator);
+
+      let ticket = create_UUID();
+      let ticketRef = db.collection("tickets").doc(ticket);
+      let ticketObject = {
+        ticket: ticket,
+        referrer: creatorInstance.creator,
+        consumed: false,
+      };
+
+      await ticketRef.set(ticketObject);
+      await ref.set({ lastTicketRequest: new Date() }, { merge: true });
+
+      res.setHeader("Content-Type", "application/json");
+      res.json(ticketObject);
+    } else {
+      hivesignerClient.me(async function (error, result) {
+        if (error) {
+          console.log(
+            "POST request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
+              req.ip
+          );
+          res.status(401).send("Invalid access token.");
+        } else {
+          let ref = db.collection("referralsCount").doc(result.user);
+          let doc = await ref.get();
+
+          if (!doc.exists) {
+            console.log(
+              "POST request to /api/tickets - Error: referralsCount doc not found. - Source: " +
+                req.ip
+            );
+            res.status(412).send("Referrer record not found.");
+          } else {
+            let referral = doc.data();
+
+            if (ticketClaimIsValid(referral)) {
+              let ticket = create_UUID();
+              let ticketRef = db.collection("tickets").doc(ticket);
+              let ticketObject = {
+                ticket: ticket,
+                referrer: result.user,
+                consumed: false,
+              };
+
+              await ticketRef.set(ticketObject);
+              await ref.set({ lastTicketRequest: new Date() }, { merge: true });
+
+              res.setHeader("Content-Type", "application/json");
+              res.json(ticketObject);
+            } else {
+              console.log(
+                "POST request to /api/tickets - Error: Condition not fulfilled. - Source: " +
+                  req.ip
+              );
+              res.status(412).send("Condition not fulfilled.");
+            }
+          }
+        }
+      });
+    }
+  } else {
+    console.log(
+      "POST request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
+        req.ip
+    );
+    res.status(401).send("Invalid access token.");
+  }
+});
+
+exports.api = functions.https.onRequest(app);
