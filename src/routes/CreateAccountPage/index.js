@@ -3,7 +3,8 @@ import axios from "axios";
 import _ from "lodash";
 import hive from "@hiveio/hive-js";
 import { useLocation } from "react-router-dom";
-import { useFirestore, useFirestoreDocData } from "reactfire";
+import { doc } from "firebase/firestore";
+import { useFirestore, useFirestoreDocDataOnce } from "reactfire";
 import { makeStyles } from "@material-ui/core/styles";
 import Grid from "@material-ui/core/Grid";
 import Stepper from "@material-ui/core/Stepper";
@@ -20,6 +21,7 @@ import Link from "@material-ui/core/Link";
 import ChooseAccount from "../../components/ChooseAccount";
 import BackupAccount from "../../components/BackupAccount";
 import ChooseDApp from "../../components/ChooseDApp";
+import { ticketThreshold, rateLimitInSeconds } from "../../config";
 
 const useStyles = makeStyles((theme) => ({
   card: {
@@ -43,9 +45,12 @@ const CreateAccountPage = () => {
   const classes = useStyles();
   const location = useLocation();
   const firestore = useFirestore();
-  const publicData = useFirestoreDocData(firestore.doc("public/data"));
+  const publicData = useFirestoreDocDataOnce(
+    doc(firestore, "public", "data")
+  ).data;
 
   const [accountTickets, setAccountTickets] = React.useState(0);
+  const [suspended, setSuspended] = React.useState(false);
   const [referrer, setReferrer] = React.useState(null);
   const [referrerAccount, setReferrerAccount] = React.useState(null);
   const [creator, setCreator] = React.useState(null);
@@ -89,19 +94,44 @@ const CreateAccountPage = () => {
 
   React.useEffect(() => {
     if (typeof publicData !== "undefined") {
+      const query = new URLSearchParams(location.search);
       var tickets = publicData.accountTickets;
 
       if (publicData.creators) {
-        publicData.creators.forEach((element) => {
-          if (element.available) {
-            tickets = tickets + element.accountTickets;
-          }
-        });
+        if (!_.isNil(query.get("creator"))) {
+          tickets = 0;
+          publicData.creators.forEach((element) => {
+            if (element.available) {
+              if (element.account === query.get("creator")) {
+                tickets = element.accountTickets;
+              }
+            }
+          });
+        } else {
+          publicData.creators.forEach((element) => {
+            if (element.available && element.isPublic) {
+              tickets = tickets + element.accountTickets;
+            }
+          });
+        }
+      }
+
+      if (tickets < ticketThreshold && (!ticket || ticket === "invalid")) {
+        tickets = 0;
+      }
+
+      const startDate = publicData.lastAccountCreated.toDate();
+      const endDate = new Date();
+      const timeDiff = endDate.getTime() - startDate.getTime();
+      const diffInMin = Math.round(timeDiff / 1000);
+
+      if (diffInMin < rateLimitInSeconds && (!ticket || ticket === "invalid")) {
+        tickets = 0;
       }
 
       setAccountTickets(tickets);
     }
-  }, [publicData]);
+  }, [publicData, ticket, location.search]);
 
   React.useEffect(() => {
     if (ticket) {
@@ -133,6 +163,7 @@ const CreateAccountPage = () => {
             setReferrer={setReferrer}
             ticket={ticket}
             setTicket={setTicket}
+            setSuspended={setSuspended}
           />
         );
       case 1:
@@ -167,7 +198,7 @@ const CreateAccountPage = () => {
           <Grid
             container
             direction="column"
-            justify="center"
+            justifyContent="center"
             alignItems="center"
             spacing={2}
           >
@@ -192,12 +223,26 @@ const CreateAccountPage = () => {
                 })}
               </Stepper>
             </Grid>
+            {suspended && (
+              <Grid item xs={12}>
+                <iframe
+                  title="rickrolled"
+                  width="420"
+                  height="345"
+                  src="https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&loop=1&autopause=0"
+                  frameborder="0"
+                  allowfullscreen
+                ></iframe>
+              </Grid>
+            )}
             <Grid item xs={12}>
-              {accountTickets === 0 ? (
+              {accountTickets === 0 || suspended ? (
                 <Alert className={classes.alert} severity="info">
                   <AlertTitle>Service Unvailable</AlertTitle>
-                  We are currently out of account creation tickets. Check back
-                  later or use{" "}
+                  {creator
+                    ? creator + " is currently not available. "
+                    : "We are currently out of account creation tickets. "}
+                  Check back later or use{" "}
                   <Link href="https://signup.hive.io" target="_blank">
                     signup.hive.io
                   </Link>{" "}

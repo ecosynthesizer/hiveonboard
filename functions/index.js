@@ -14,7 +14,6 @@ let db = admin.firestore();
 
 let client = new dhive.Client([
   "https://api.hive.blog",
-  "https://api.hivekings.com",
   "https://anyx.io",
   "https://api.openhive.network",
 ]);
@@ -22,141 +21,237 @@ let client = new dhive.Client([
 let key = dhive.PrivateKey.fromString(config.activeKey);
 let keyLog = dhive.PrivateKey.fromString(config.activeKeyLog);
 
-const getRandomArbitrary = (min, max) => {
-  return Math.random() * (max - min) + min;
+const runtimeOpts = {
+  timeoutSeconds: 300,
 };
 
-exports.createAccount = functions.https.onCall(async (data, context) => {
-  let ticket = data.ticket;
-  let phoneNumberHashObject = CryptoJS.SHA256("No Phone Number");
-  let referrer = data.referrer;
-  let creator = config.account;
-  let provider = config.provider;
-  let beneficiaries = [];
+exports.createAccount = functions
+  .runWith(runtimeOpts)
+  .https.onCall(async (data, context) => {
+    let ticket = data.ticket;
+    let phoneNumberHashObject = CryptoJS.SHA256("No Phone Number");
+    let referrer = data.referrer;
+    let creator = config.account;
+    let creatorRequested = false;
+    let provider = config.provider;
+    let beneficiaries = [];
 
-  if (ticket) {
-    let ticketRef = db.collection("tickets").doc(ticket);
-    let ticketDoc = await ticketRef.get();
+    if (ticket) {
+      let ticketRef = db.collection("tickets").doc(ticket);
+      let ticketDoc = await ticketRef.get();
 
-    if (ticketDoc.exists) {
-      let ticketData = ticketDoc.data();
-      if (ticketData.consumed) {
-        console.log("Ticket already consumed.");
+      if (ticketDoc.exists) {
+        let ticketData = ticketDoc.data();
+        if (ticketData.consumed) {
+          console.log("Ticket already consumed.");
+          return {
+            error: "Ticket already consumed.",
+          };
+        }
+      } else {
+        console.log("Ticket is invalid.");
         return {
-          error: "Ticket already consumed.",
+          error: "Ticket is invalid.",
         };
       }
     } else {
-      console.log("Ticket is invalid.");
-      return {
-        error: "Ticket is invalid.",
-      };
-    }
-  } else {
-    ticket = "NO TICKET";
-    let oneWeekAgo = admin.firestore.Timestamp.fromDate(
-      new Date(Date.now() - 604800000)
-    );
-
-    if (!context.auth.hasOwnProperty("uid")) {
-      console.log("Verficiation failed.");
-      return {
-        error: "Verficiation failed.",
-      };
-    }
-
-    let accountsRef = db.collection("accounts");
-    let query = await accountsRef
-      .where("ipAddress", "==", context.rawRequest.ip)
-      .where("timestamp", ">", oneWeekAgo)
-      .get();
-
-    if (!query.empty) {
-      // Delete user including phone number
-      if (context.hasOwnProperty("auth")) {
-        await admin.auth().deleteUser(context.auth.uid);
-      }
-      console.log("IP was recently used for account creation.");
-      return {
-        error: "Your IP was recently used for account creation.",
-      };
-    }
-
-    phoneNumberHashObject = CryptoJS.SHA256(context.auth.token.phone_number);
-
-    let queryUser = await accountsRef
-      .where(
-        "phoneNumberHash",
-        "==",
-        phoneNumberHashObject.toString(CryptoJS.enc.Hex)
-      )
-      .get();
-
-    if (!queryUser.empty) {
-      // Delete user including phone number
-      if (context.hasOwnProperty("auth")) {
-        await admin.auth().deleteUser(context.auth.uid);
-      }
-      console.log(
-        "Phone number (" +
-          phoneNumberHashObject.toString(CryptoJS.enc.Hex) +
-          ") was already used for account creation."
+      ticket = "NO TICKET";
+      let oneWeekAgo = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() - 604800000)
       );
-      return {
-        error: "Your phone number was already used for account creation.",
-      };
-    }
-  }
 
-  let publicRef = db.collection("public");
-  let queryCreators = await publicRef.doc("data").get();
-  let creators = queryCreators.data().creators;
-  let creatorCandidate = null;
+      if (!context.auth.hasOwnProperty("uid")) {
+        console.log("Verficiation failed.");
+        return {
+          error: "Verficiation failed.",
+        };
+      }
 
-  // Look up a creator with the most tickets available, prefer a creator if passed in
-  creators.forEach((element) => {
-    if (
-      element.accountTickets > 0 &&
-      element.available &&
-      data.creator === element.account
-    ) {
-      creatorCandidate = element;
-      let creatorConfig = _.find(config.creator_instances, {
-        creator: element.account,
-      });
-      creatorCandidate = { ...creatorCandidate, ...creatorConfig };
-    } else if (element.accountTickets > 0 && element.available) {
-      if (creatorCandidate) {
-        if (element.accountTickets > creatorCandidate.accountTickets) {
-          creatorCandidate = element;
-          let creatorConfig = _.find(config.creator_instances, {
-            creator: element.account,
-          });
-          creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+      let accountsRef = db.collection("accounts");
+      let query = await accountsRef
+        .where("ipAddress", "==", context.rawRequest.ip)
+        .where("timestamp", ">", oneWeekAgo)
+        .get();
+
+      if (!query.empty) {
+        // Delete user including phone number
+        if (context.hasOwnProperty("auth")) {
+          await admin.auth().deleteUser(context.auth.uid);
         }
-      } else {
+        console.log("IP was recently used for account creation.");
+        return {
+          error: "Your IP was recently used for account creation.",
+        };
+      }
+
+      phoneNumberHashObject = CryptoJS.SHA256(context.auth.token.phone_number);
+
+      let queryUser = await accountsRef
+        .where(
+          "phoneNumberHash",
+          "==",
+          phoneNumberHashObject.toString(CryptoJS.enc.Hex)
+        )
+        .get();
+
+      if (!queryUser.empty) {
+        // Delete user including phone number
+        if (context.hasOwnProperty("auth")) {
+          await admin.auth().deleteUser(context.auth.uid);
+        }
+        console.log(
+          "Phone number (" +
+            phoneNumberHashObject.toString(CryptoJS.enc.Hex) +
+            ") was already used for account creation."
+        );
+        return {
+          error: "Your phone number was already used for account creation.",
+        };
+      }
+    }
+
+    let publicRef = db.collection("public");
+    let queryCreators = await publicRef.doc("data").get();
+    let creators = queryCreators.data().creators;
+    let creatorCandidate = null;
+
+    // Look up a creator with the most tickets available, prefer a creator if passed in
+    creators.forEach((element) => {
+      if (element.accountTickets > 0 && data.creator === element.account) {
+        creatorRequested = true;
         creatorCandidate = element;
         let creatorConfig = _.find(config.creator_instances, {
           creator: element.account,
         });
         creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+      } else if (
+        element.accountTickets > 0 &&
+        element.available &&
+        !creatorRequested
+      ) {
+        if (creatorCandidate) {
+          if (element.accountTickets > creatorCandidate.accountTickets) {
+            let creatorConfig = _.find(config.creator_instances, {
+              creator: element.account,
+            });
+            if (creatorConfig.isPublic) {
+              creatorCandidate = element;
+              creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+            }
+          }
+        } else {
+          let creatorConfig = _.find(config.creator_instances, {
+            creator: element.account,
+          });
+          if (creatorConfig.isPublic) {
+            creatorCandidate = element;
+            creatorCandidate = { ...creatorCandidate, ...creatorConfig };
+          }
+        }
       }
-    }
-  });
+    });
 
-  // Double-Check if the remote instance is up and running
-  let endpointCheck;
-  try {
-    endpointCheck = await axios.get(creatorCandidate.endpoint);
-  } catch (error) {
-    endpointCheck = false;
-    console.log("Remote creator instance is offline.");
-  }
-
-  if (creatorCandidate && endpointCheck) {
-    // Creator instance available
+    // Double-Check if the remote instance is up and running
+    let endpointCheck;
     try {
-      creator = creatorCandidate.account;
+      endpointCheck = await axios.get(creatorCandidate.endpoint);
+    } catch (error) {
+      endpointCheck = false;
+      console.log("Remote creator instance is offline.");
+    }
+
+    if (creatorRequested && !endpointCheck) {
+      // Delete user including phone number
+      if (context.hasOwnProperty("auth")) {
+        await admin.auth().deleteUser(context.auth.uid);
+      }
+      console.log("Account creation on remote creator instance failed.");
+      return { error: "Account creation on remote creator instance failed." };
+    }
+
+    if (creatorCandidate && endpointCheck) {
+      // Creator instance available
+      try {
+        creator = creatorCandidate.account;
+
+        // Build the custom_json beneficiaries array
+        if (referrer) {
+          beneficiaries.push({
+            name: referrer,
+            weight: config.fee.referrer,
+            label: "referrer",
+          });
+        }
+        if (creator) {
+          beneficiaries.push({
+            name: creator,
+            weight: config.fee.creator,
+            label: "creator",
+          });
+        }
+        if (provider) {
+          beneficiaries.push({
+            name: provider,
+            weight: config.fee.provider,
+            label: "provider",
+          });
+        }
+
+        let postBody = {
+          name: data.username,
+          publicKeys: data.publicKeys,
+          metaData: {
+            beneficiaries: beneficiaries,
+          },
+          creator: creator,
+          creatorRequested: creatorRequested,
+        };
+
+        let postRequest = await axios.post(
+          creatorCandidate.endpoint + "/createAccount",
+          postBody,
+          {
+            headers: {
+              authority: creatorCandidate.apiKey,
+            },
+          }
+        );
+
+        if (postRequest.created === false) {
+          // Delete user including phone number
+          if (context.hasOwnProperty("auth")) {
+            await admin.auth().deleteUser(context.auth.uid);
+          }
+          console.log("Account creation on remote creator instance failed.");
+          return {
+            error: "Account creation on remote creator instance failed.",
+          };
+        }
+      } catch (error) {
+        // Delete user including phone number
+        if (context.hasOwnProperty("auth")) {
+          await admin.auth().deleteUser(context.auth.uid);
+        }
+        console.log(error);
+        return { error: "Remote creator instance is offline." };
+      }
+    } else {
+      // No creator instance available, we have to create ourself
+      const ownerAuth = {
+        weight_threshold: 1,
+        account_auths: [],
+        key_auths: [[data.publicKeys.owner, 1]],
+      };
+      const activeAuth = {
+        weight_threshold: 1,
+        account_auths: [],
+        key_auths: [[data.publicKeys.active, 1]],
+      };
+      const postingAuth = {
+        weight_threshold: 1,
+        account_auths: [],
+        key_auths: [[data.publicKeys.posting, 1]],
+      };
 
       // Build the custom_json beneficiaries array
       if (referrer) {
@@ -181,162 +276,180 @@ exports.createAccount = functions.https.onCall(async (data, context) => {
         });
       }
 
-      let postBody = {
-        name: data.username,
-        publicKeys: data.publicKeys,
-        metaData: {
-          beneficiaries: beneficiaries,
-        },
-      };
-
-      if (creator === data.creator) {
-        postBody.creator = creator;
-      }
-
-      let postRequest = await axios.post(
-        creatorCandidate.endpoint + "/createAccount",
-        postBody,
+      const op = [
+        "create_claimed_account",
         {
-          headers: {
-            authority: creatorCandidate.apiKey,
-          },
-        }
-      );
+          creator: config.account,
+          new_account_name: data.username,
+          owner: ownerAuth,
+          active: activeAuth,
+          posting: postingAuth,
+          memo_key: data.publicKeys.memo,
+          json_metadata: JSON.stringify({
+            beneficiaries: beneficiaries,
+          }),
+          extensions: [],
+        },
+      ];
 
-      if (postRequest.created === false) {
+      try {
+        await client.broadcast.sendOperations([op], key);
+      } catch (error) {
         // Delete user including phone number
         if (context.hasOwnProperty("auth")) {
           await admin.auth().deleteUser(context.auth.uid);
         }
-        console.log("Account creation on remote creator instance failed.");
-        return { error: "Account creation on remote creator instance failed." };
+        console.log("Account creation on backup instance failed.");
+        return { error: "Account creation on backup instance failed." };
       }
-    } catch (error) {
-      // Delete user including phone number
-      if (context.hasOwnProperty("auth")) {
-        await admin.auth().deleteUser(context.auth.uid);
-      }
-      console.log("Remote creator instance is offline.");
-      return { error: "Remote creator instance is offline." };
-    }
-  } else {
-    // No creator instance available, we have to create ourself
-    const ownerAuth = {
-      weight_threshold: 1,
-      account_auths: [],
-      key_auths: [[data.publicKeys.owner, 1]],
-    };
-    const activeAuth = {
-      weight_threshold: 1,
-      account_auths: [],
-      key_auths: [[data.publicKeys.active, 1]],
-    };
-    const postingAuth = {
-      weight_threshold: 1,
-      account_auths: [],
-      key_auths: [[data.publicKeys.posting, 1]],
-    };
-
-    // Build the custom_json beneficiaries array
-    if (referrer) {
-      beneficiaries.push({
-        name: referrer,
-        weight: config.fee.referrer,
-        label: "referrer",
-      });
-    }
-    if (creator) {
-      beneficiaries.push({
-        name: creator,
-        weight: config.fee.creator,
-        label: "creator",
-      });
-    }
-    if (provider) {
-      beneficiaries.push({
-        name: provider,
-        weight: config.fee.provider,
-        label: "provider",
-      });
     }
 
-    const op = [
-      "create_claimed_account",
-      {
-        creator: config.account,
-        new_account_name: data.username,
-        owner: ownerAuth,
-        active: activeAuth,
-        posting: postingAuth,
-        memo_key: data.publicKeys.memo,
-        json_metadata: JSON.stringify({
-          beneficiaries: beneficiaries,
-        }),
-        extensions: [],
-      },
-    ];
+    let accountData = {
+      accountName: data.username,
+      ipAddress: context.rawRequest.ip,
+      phoneNumberHash: phoneNumberHashObject.toString(CryptoJS.enc.Hex),
+      timestamp: new Date(),
+      posted: false,
+      referrer: referrer,
+      creator: creator,
+      provider: provider,
+      delegation: true,
+      ticket: ticket,
+    };
+
+    await db.collection("accounts").doc(data.username).set(accountData);
+
+    // Delete user including phone number
+    if (context.hasOwnProperty("auth")) {
+      await admin.auth().deleteUser(context.auth.uid);
+    }
+
+    // Set ticket to consumed
+    if (ticket) {
+      await db
+        .collection("tickets")
+        .doc(ticket)
+        .set({ consumed: true, consumedBy: data.username }, { merge: true });
+    }
+
+    // HP delegation
+    if (referrer || config.defaultDelegation === "0 VESTS") {
+      await db
+        .collection("accounts")
+        .doc(data.username)
+        .set({ delegation: false }, { merge: true });
+    } else {
+      try {
+        await client.broadcast.delegateVestingShares(
+          {
+            delegatee: data.username,
+            delegator: config.account,
+            vesting_shares: config.defaultDelegation,
+          },
+          key
+        );
+      } catch (error) {
+        await db
+          .collection("accounts")
+          .doc(data.username)
+          .set({ delegation: false }, { merge: true });
+        console.log("Delegation for " + data.username + " failed.");
+      }
+    }
 
     try {
-      await client.broadcast.sendOperations([op], key);
+      await db
+        .collection("public")
+        .doc("data")
+        .set({ lastAccountCreated: new Date() }, { merge: true });
     } catch (error) {
-      // Delete user including phone number
-      if (context.hasOwnProperty("auth")) {
-        await admin.auth().deleteUser(context.auth.uid);
-      }
-      console.log("Account creation on backup instance failed.");
-      return { error: "Account creation on backup instance failed." };
+      console.log(error);
     }
-  }
 
-  let accountData = {
-    accountName: data.username,
-    ipAddress: context.rawRequest.ip,
-    phoneNumberHash: phoneNumberHashObject.toString(CryptoJS.enc.Hex),
-    timestamp: new Date(),
-    posted: false,
-    referrer: referrer,
-    creator: creator,
-    provider: provider,
-    delegation: true,
-    ticket: ticket,
-  };
+    console.log(JSON.stringify(accountData));
 
-  await db.collection("accounts").doc(data.username).set(accountData);
+    return data;
+  });
 
-  // Delete user including phone number
-  if (context.hasOwnProperty("auth")) {
-    await admin.auth().deleteUser(context.auth.uid);
-  }
-
-  // Set ticket to consumed
-  if (ticket) {
-    await db
-      .collection("tickets")
-      .doc(ticket)
-      .set({ consumed: true, consumedBy: data.username }, { merge: true });
-  }
-
-  // HP delegation
-  try {
-    await client.broadcast.delegateVestingShares(
-      {
-        delegatee: data.username,
-        delegator: config.account,
-        vesting_shares: config.defaultDelegation,
-      },
-      key
+exports.checkReputation = functions.https.onCall(async (data, context) => {
+  function create_UUID() {
+    var dt = new Date().getTime();
+    var uuid = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(
+      /[xy]/g,
+      function (c) {
+        var r = (dt + Math.random() * 16) % 16 | 0;
+        dt = Math.floor(dt / 16);
+        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+      }
     );
-  } catch (error) {
-    await db
-      .collection("accounts")
-      .doc(data.username)
-      .set({ delegation: false }, { merge: true });
-    console.log("Delegation for " + data.username + " failed.");
+    return uuid;
   }
 
-  console.log(JSON.stringify(accountData));
+  let requestIp = context.rawRequest.ip;
+  let result;
 
-  return data;
+  try {
+    let oneWeekAgo = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 604800000)
+    );
+
+    let accountsRef = db.collection("accounts");
+    let query = await accountsRef
+      .where("ipAddress", "==", context.rawRequest.ip)
+      .where("timestamp", ">", oneWeekAgo)
+      .get();
+
+    if (!query.empty) {
+      console.log("IP address already used for account creation.");
+      return { ticket: "BADREPUTATION" };
+    }
+
+    let ticketsRef = db.collection("tickets");
+    let queryTickets = await ticketsRef
+      .where("ipAddress", "==", context.rawRequest.ip)
+      .get();
+
+    if (!queryTickets.empty) {
+      console.log("Ticket for specific IP address found.");
+      return { ticket: queryTickets.docs[0].get("ticket") };
+    }
+
+    let { "user-agent": userAgent } = context.rawRequest.headers;
+
+    result = await axios.get(
+      `https://api.esteem.app/api/signup/quality?creator=${config.ipQualityScorePrivateKey}&request_ip=${requestIp}&user_agent=${userAgent}`
+    );
+
+    console.log(JSON.stringify(result.data));
+
+    if (result.data.success === false) {
+      return { ticket: "" };
+    }
+
+    const score = result.data.fraud_score;
+
+    if (score >= 0 && score < 30) {
+      let ticket = create_UUID();
+      let ticketObject = {
+        ticket: ticket,
+        referrer: config.provider,
+        consumed: false,
+        ipAddress: context.rawRequest.ip,
+      };
+
+      let ticketRef = db.collection("tickets").doc(ticket);
+      await ticketRef.set(ticketObject);
+
+      return { ticket: ticketObject.ticket };
+    } else if (score >= 75) {
+      return { ticket: "BADREPUTATION" };
+    } else {
+      return { ticket: "" };
+    }
+  } catch (error) {
+    console.log("Error requesting ipqualityscore.com service.");
+    return { ticket: "" };
+  }
 });
 
 exports.claimAccounts = functions.pubsub
@@ -380,14 +493,25 @@ exports.claimAccounts = functions.pubsub
       if (config.creator_instances.length > 0) {
         let accounts = [];
         let instances = {};
+        let instancesPublic = {};
 
         await Promise.all(
           config.creator_instances.map(async (object) => {
-            try {
-              await axios.get(object.endpoint);
-              instances[object.creator] = true;
-            } catch (error) {
+            if (object.disabled) {
               instances[object.creator] = false;
+            } else {
+              try {
+                await axios.get(object.endpoint, { timeout: 2000 });
+                instances[object.creator] = true;
+              } catch (error) {
+                instances[object.creator] = false;
+              }
+            }
+
+            if (object.isPublic) {
+              instancesPublic[object.creator] = true;
+            } else {
+              instancesPublic[object.creator] = false;
             }
           })
         );
@@ -405,6 +529,7 @@ exports.claimAccounts = functions.pubsub
               account: element.name,
               accountTickets: element.pending_claimed_accounts,
               available: instances[element.name],
+              isPublic: instancesPublic[element.name],
             });
           }
         });
@@ -424,27 +549,26 @@ exports.claimAccounts = functions.pubsub
       let query = await accountsRef
         .where("delegation", "==", true)
         .where("timestamp", "<", oneWeekAgo)
+        .limit(3)
         .get();
 
       query.forEach((element) => {
         try {
-          _.delay(() => {
-            console.log("Removing Delegation: " + element.id);
-            client.broadcast
-              .delegateVestingShares(
-                {
-                  delegatee: element.id,
-                  delegator: config.account,
-                  vesting_shares: "0.000000 VESTS",
-                },
-                key
-              )
-              .then(() => {
-                accountsRef
-                  .doc(element.id)
-                  .set({ delegation: false }, { merge: true });
-              });
-          }, getRandomArbitrary(0, 100000));
+          console.log("Removing Delegation: " + element.id);
+          client.broadcast
+            .delegateVestingShares(
+              {
+                delegatee: element.id,
+                delegator: config.account,
+                vesting_shares: "0.000000 VESTS",
+              },
+              key
+            )
+            .then(() => {
+              accountsRef
+                .doc(element.id)
+                .set({ delegation: false }, { merge: true });
+            });
         } catch (error) {
           console.log("Removing delegation Error", error);
           throw new Error(error);
@@ -523,7 +647,7 @@ exports.postAccountCreationReport = functions.pubsub
           allow_votes: true,
           allow_curation_rewards: true,
           max_accepted_payout: "1000000.000 HBD",
-          percent_steem_dollars: 10000,
+          percent_hbd: 10000,
           extensions: [
             [
               0,
@@ -726,6 +850,7 @@ app.get("/api/referrer/:account", async (req, res) => {
   let limit = 20;
   let size = 0;
   let orderBy = admin.firestore.FieldPath.documentId();
+  let sortDirection = "asc";
 
   if (req.query.hasOwnProperty("orderBy")) {
     switch (req.query.orderBy) {
@@ -740,6 +865,17 @@ app.get("/api/referrer/:account", async (req, res) => {
         break;
       default:
         res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("sortDirection")) {
+    if (
+      req.query.sortDirection === "asc" ||
+      req.query.sortDirection === "desc"
+    ) {
+      sortDirection = req.query.sortDirection;
+    } else {
+      res.status(400).json({ error: "Invalid sortDirection parameter" });
     }
   }
 
@@ -770,7 +906,7 @@ app.get("/api/referrer/:account", async (req, res) => {
 
   let query = await ref
     .where("referrer.name", "==", req.params.account)
-    .orderBy(orderBy)
+    .orderBy(orderBy, sortDirection)
     .limit(limit)
     .offset(offset)
     .get();
@@ -796,6 +932,7 @@ app.get("/api/provider/:account", async (req, res) => {
   let limit = 20;
   let size = 0;
   let orderBy = admin.firestore.FieldPath.documentId();
+  let sortDirection = "asc";
 
   if (req.query.hasOwnProperty("orderBy")) {
     switch (req.query.orderBy) {
@@ -810,6 +947,17 @@ app.get("/api/provider/:account", async (req, res) => {
         break;
       default:
         res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("sortDirection")) {
+    if (
+      req.query.sortDirection === "asc" ||
+      req.query.sortDirection === "desc"
+    ) {
+      sortDirection = req.query.sortDirection;
+    } else {
+      res.status(400).json({ error: "Invalid sortDirection parameter" });
     }
   }
 
@@ -840,7 +988,7 @@ app.get("/api/provider/:account", async (req, res) => {
 
   let query = await ref
     .where("provider.name", "==", req.params.account)
-    .orderBy(orderBy)
+    .orderBy(orderBy, sortDirection)
     .limit(limit)
     .offset(offset)
     .get();
@@ -866,6 +1014,7 @@ app.get("/api/creator/:account", async (req, res) => {
   let limit = 20;
   let size = 0;
   let orderBy = admin.firestore.FieldPath.documentId();
+  let sortDirection = "asc";
 
   if (req.query.hasOwnProperty("orderBy")) {
     switch (req.query.orderBy) {
@@ -880,6 +1029,17 @@ app.get("/api/creator/:account", async (req, res) => {
         break;
       default:
         res.status(400).json({ error: "Invalid orderBy parameter" });
+    }
+  }
+
+  if (req.query.hasOwnProperty("sortDirection")) {
+    if (
+      req.query.sortDirection === "asc" ||
+      req.query.sortDirection === "desc"
+    ) {
+      sortDirection = req.query.sortDirection;
+    } else {
+      res.status(400).json({ error: "Invalid sortDirection parameter" });
     }
   }
 
@@ -910,7 +1070,7 @@ app.get("/api/creator/:account", async (req, res) => {
 
   let query = await ref
     .where("creator.name", "==", req.params.account)
-    .orderBy(orderBy)
+    .orderBy(orderBy, sortDirection)
     .limit(limit)
     .offset(offset)
     .get();
@@ -927,16 +1087,51 @@ app.get("/api/creator/:account", async (req, res) => {
   res.json({ items: items, limit: limit, offset: offset, size: size });
 });
 
+app.get("/api/accounts/recentlyCreated", async (req, res) => {
+  let items = [];
+  let ref = db.collection("referrals");
+
+  let limit = 20;
+
+  if (req.query.hasOwnProperty("limit")) {
+    if (Number.isInteger(parseInt(req.query.limit))) {
+      limit = parseInt(req.query.limit);
+
+      if (limit > 1000) {
+        limit = 1000;
+      }
+    } else {
+      res.status(400).json({ error: "Invalid limit parameter" });
+    }
+  }
+
+  let query = await ref.orderBy("creator.timestamp", "desc").limit(limit).get();
+
+  query.forEach((doc) => {
+    let data = doc.data();
+    items.push({
+      account: doc.id,
+      timestamp: data.creator.timestamp._seconds * 1000,
+      creator: data.creator ? data.creator.name : "",
+      provider: data.provider ? data.provider.name : "",
+      referrer: data.referrer ? data.referrer.name : "",
+    });
+  });
+
+  res.json({ items: items, limit: limit });
+});
+
 app.get("/api/tickets/:ticket", async (req, res) => {
   let ref = db.collection("tickets").doc(req.params.ticket);
   let doc = await ref.get();
 
   if (doc.exists) {
     let ticket = doc.data();
+
     if (ticket.consumed) {
-      res.json({ valid: false });
+      res.json({ valid: false, data: ticket });
     } else {
-      res.json({ valid: true });
+      res.json({ valid: true, data: ticket });
     }
   } else {
     res.json({ valid: false });
@@ -947,54 +1142,98 @@ app.get("/api/tickets", async (req, res) => {
   if (req.query.hasOwnProperty("accessToken")) {
     let hivesignerClient = new hivesigner.Client({
       app: "hiveonboard",
-      callbackURL: "http://hiveonboard.com/dashboard",
+      callbackURL: "https://hiveonboard.com/dashboard",
       scope: ["login"],
       accessToken: [req.query.accessToken],
     });
 
-    hivesignerClient.me(async function (error, result) {
-      if (error) {
-        console.log(
-          "GET request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
-            req.ip
-        );
-        res.status(401).send("Invalid access token.");
-      } else {
-        let items = [];
-        let size = 0;
-
-        let ref = db.collection("tickets");
-        let query = await ref.where("referrer", "==", result.user).get();
-
-        query.forEach((doc) => {
-          let data = doc.data();
-          items.push(data);
-          size += 1;
-        });
-
-        let referralRef = db.collection("referralsCount").doc(result.user);
-        let referralDoc = await referralRef.get();
-        let isVip = false;
-        let lastTicketRequest = 0;
-
-        if (referralDoc.exists) {
-          let referral = referralDoc.data();
-          if (referral.lastTicketRequest) {
-            lastTicketRequest = referral.lastTicketRequest.toMillis();
-          }
-          if (referral.isVip) {
-            isVip = referral.isVip;
-          }
-        }
-
-        res.json({
-          items: items,
-          size: size,
-          lastTicketRequest: lastTicketRequest,
-          isVip: isVip,
-        });
-      }
+    let creatorInstance = _.find(config.creator_instances, {
+      apiKey: req.query.accessToken,
     });
+
+    if (creatorInstance) {
+      let items = [];
+      let size = 0;
+
+      let ref = db.collection("tickets");
+      let query = await ref
+        .where("referrer", "==", creatorInstance.creator)
+        .get();
+
+      query.forEach((doc) => {
+        let data = doc.data();
+        items.push(data);
+        size += 1;
+      });
+
+      let referralRef = db
+        .collection("referralsCount")
+        .doc(creatorInstance.creator);
+      let referralDoc = await referralRef.get();
+      let isVip = false;
+      let lastTicketRequest = 0;
+
+      if (referralDoc.exists) {
+        let referral = referralDoc.data();
+        if (referral.lastTicketRequest) {
+          lastTicketRequest = referral.lastTicketRequest.toMillis();
+        }
+        if (referral.isVip) {
+          isVip = referral.isVip;
+        }
+      }
+
+      res.json({
+        items: items,
+        size: size,
+        lastTicketRequest: lastTicketRequest,
+        isVip: isVip,
+      });
+    } else {
+      hivesignerClient.me(async function (error, result) {
+        if (error) {
+          console.log(
+            "GET request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
+              req.ip
+          );
+          res.status(401).send("Invalid access token.");
+        } else {
+          let items = [];
+          let size = 0;
+
+          let ref = db.collection("tickets");
+          let query = await ref.where("referrer", "==", result.user).get();
+
+          query.forEach((doc) => {
+            let data = doc.data();
+            items.push(data);
+            size += 1;
+          });
+
+          let referralRef = db.collection("referralsCount").doc(result.user);
+          let referralDoc = await referralRef.get();
+          let isVip = false;
+          let lastTicketRequest = 0;
+
+          if (referralDoc.exists) {
+            let referral = referralDoc.data();
+            if (referral.lastTicketRequest) {
+              lastTicketRequest = referral.lastTicketRequest.toMillis();
+            }
+            if (referral.isVip) {
+              isVip = referral.isVip;
+            }
+          }
+
+          res.json({
+            items: items,
+            size: size,
+            lastTicketRequest: lastTicketRequest,
+            isVip: isVip,
+          });
+        }
+      });
+    }
   } else {
     console.log(
       "GET request to /api/tickets - Refused: Invalid auth accessToken. - Source: " +
@@ -1055,7 +1294,7 @@ app.post("/api/tickets", async (req, res) => {
   if (req.body.accessToken) {
     let hivesignerClient = new hivesigner.Client({
       app: "hiveonboard",
-      callbackURL: "http://hiveonboard.com/dashboard",
+      callbackURL: "https://hiveonboard.com/dashboard",
       scope: ["login"],
       accessToken: [req.body.accessToken],
     });
@@ -1068,14 +1307,17 @@ app.post("/api/tickets", async (req, res) => {
       let ref = db.collection("referralsCount").doc(creatorInstance.creator);
 
       let ticket = create_UUID();
-      let ticketRef = db.collection("tickets").doc(ticket);
       let ticketObject = {
         ticket: ticket,
         referrer: creatorInstance.creator,
         consumed: false,
       };
 
-      await ticketRef.set(ticketObject);
+      if (!creatorInstance.disabled) {
+        let ticketRef = db.collection("tickets").doc(ticket);
+        await ticketRef.set(ticketObject);
+      }
+
       await ref.set({ lastTicketRequest: new Date() }, { merge: true });
 
       res.setHeader("Content-Type", "application/json");

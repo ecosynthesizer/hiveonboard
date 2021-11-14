@@ -30,24 +30,21 @@ export const landingContent = [
     image: "images/social_hive_lets-talk-community.png",
     overline: "What is HIVE?",
     heading: "Learn",
-    text:
-      "Learn everything you need to know about HIVE, it's benefits and why it's the future of social media.",
+    text: "Learn everything you need to know about HIVE, it's benefits and why it's the future of social media.",
     to: "/what-is-hive",
   },
   {
     image: "images/social_hive_lets-talk-onboarding.png",
     overline: "Get Onboard",
     heading: "Create Account",
-    text:
-      "Create a HIVE account, start today and get engaged. The community is waiting for you!",
+    text: "Create a HIVE account, start today and get engaged. The community is waiting for you!",
     to: "/create-account",
   },
   {
     image: "images/social_hive_lets-talk-dapps.png",
     overline: "Discover dApps",
     heading: "Explore",
-    text:
-      "Try out all those awesome dApps and start earning and investing into HIVE cryptocurrency tokens.",
+    text: "Try out all those awesome dApps and start earning and investing into HIVE cryptocurrency tokens.",
     to: "/discover-dapps",
   },
 ];
@@ -89,6 +86,20 @@ export const dApps = [
     url: "https://dapplr.in",
   },
   {
+    icon: "travelfeed.png",
+    name: "TravelFeed",
+    subtitle: "Travel Blogging",
+    text: "Start your own travel blog and earn Hive",
+    url: "https://travelfeed.io/?utm_source=hiveonboard",
+  },
+  {
+    icon: "truvvl.svg",
+    name: "truvvl",
+    subtitle: "Stories App",
+    text: "Create and discover (travel) stories on your smartphone",
+    url: "https://truvvl.com/?utm_source=hiveonboard",
+  },
+  {
     icon: "quello.png",
     name: "quello.io",
     subtitle: "Questions & Answers",
@@ -97,17 +108,68 @@ export const dApps = [
   },
   {
     icon: "dbuzz.jpg",
-    name: "dbuzz.io",
+    name: "D.Buzz",
     subtitle: "Micro blogging",
     text: "If you like twitter, you'll love dbuzz",
     url: "https://d.buzz",
   },
   {
+    icon: "leofinance.png",
+    name: "LeoFinance",
+    subtitle: "Crypto & Finance",
+    text: "Social media community for Crypto & Finance content creators",
+    url: "https://leofinance.io",
+  },
+  {
     icon: "stemsocial.png",
     name: "STEMsocial",
     subtitle: "Curating content",
-    text:
-      "Curation project around science, technology, engineering & mathematics",
+    text: "Curation project around science, technology, engineering & mathematics",
     url: "https://stem.openhive.network",
   },
+  {
+    icon: "stemgeeks.png",
+    name: "STEMGeeks",
+    subtitle: "Science Technology Engineering Math",
+    text: "Technology & science-focused community",
+    url: "https://stemgeeks.net",
+  },
+  {
+    icon: "NaturalMedicineLogo.png",
+    name: "NaturalMedicine",
+    subtitle: "Natural Health & WellBeing",
+    text: "Social Media for Health Of Body, Mind, Soul & Earth",
+    url: "https://naturalmedicine.io",
+  },
+  {
+    icon: "HypnoChain.png",
+    name: "HypnoChain",
+    subtitle: "Hypnosis & ASMR",
+    text: "Your hub for all hypnosis related content",
+    url: "https://hypnochain.com/?referral=hiveonboard",
+  },
+  {
+    icon: "NFTShowroom.jpg",
+    name: "NFT Showroom",
+    subtitle: "Proof of Art",
+    text: "NFT Showroom is a digital art marketplace",
+    url: "https://nftshowroom.com/?r=hiveonboard",
+  },
+  {
+    icon: "waivio_icon_jpg.jpg",
+    name: "Waivio",
+    subtitle: "Platform for Business 3.0",
+    text: "Empower users to trade their attention and knowledge on their own terms",
+    url: "https://www.waivio.com",
+  },
+  {
+    icon: "dining-gifts-logo.png",
+    name: "Dining.Gifts",
+    subtitle: "Share and get rewarded",
+    text: "Try new dishes, share your experiences and collect tangible rewards",
+    url: "https://www.dining.gifts",
+  },
 ];
+
+export const ticketThreshold = 2000;
+export const rateLimitInSeconds = 0;

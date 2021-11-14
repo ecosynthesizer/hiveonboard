@@ -1,5 +1,14 @@
 import React from "react";
-import { useAnalytics } from "reactfire";
+import { httpsCallable } from "firebase/functions";
+import { logEvent } from "firebase/analytics";
+import { useAnalytics, useFunctions } from "reactfire";
+import {
+  isChrome,
+  isEdgeChromium,
+  isFirefox,
+  isIOS,
+  isSafari,
+} from "react-device-detect";
 import _ from "lodash";
 import { useFormik } from "formik";
 import * as Yup from "yup";
@@ -8,6 +17,8 @@ import { makeStyles } from "@material-ui/core/styles";
 import Grid from "@material-ui/core/Grid";
 import TextField from "@material-ui/core/TextField";
 import Button from "@material-ui/core/Button";
+import Backdrop from "@material-ui/core/Backdrop";
+import CircularProgress from "@material-ui/core/CircularProgress";
 import InputAdornment from "@material-ui/core/InputAdornment";
 import Icon from "@material-ui/core/Icon";
 import FormGroup from "@material-ui/core/FormGroup";
@@ -21,9 +32,16 @@ import DialogTitle from "@material-ui/core/DialogTitle";
 import Typography from "@material-ui/core/Typography";
 import Chip from "@material-ui/core/Chip";
 import Tooltip from "@material-ui/core/Tooltip";
+import Hidden from "@material-ui/core/Hidden";
+import Alert from "@material-ui/lab/Alert";
+import AlertTitle from "@material-ui/lab/AlertTitle";
+import Box from "@material-ui/core/Box";
+import IconButton from "@material-ui/core/IconButton";
+import HelpIcon from "@material-ui/icons/Help";
 
 import { tos } from "../../config";
 import ProfileCard from "../ProfileCard";
+import keychain from "../../assets/keychain.png";
 
 const useStyles = makeStyles((theme) => ({
   form: {
@@ -38,6 +56,23 @@ const useStyles = makeStyles((theme) => ({
   chip: {
     marginTop: theme.spacing(2),
   },
+  alertInfo: {
+    marginBottom: theme.spacing(4),
+  },
+  button: {
+    margin: theme.spacing(1),
+  },
+  iconRoot: {
+    textAlign: "center",
+  },
+  imageIcon: {
+    height: "100%",
+    width: "100%",
+  },
+  backdrop: {
+    zIndex: theme.zIndex.drawer + 1,
+    color: "#ffffff",
+  },
 }));
 
 const ChooseAccount = ({
@@ -50,23 +85,37 @@ const ChooseAccount = ({
   setReferrer,
   ticket,
   setTicket,
+  setSuspended,
 }) => {
   const classes = useStyles();
   const analytics = useAnalytics();
+  const functions = useFunctions();
+
+  const checkReputation = httpsCallable(functions, "checkReputation");
 
   const [referrerProfile, setReferrerProfile] = React.useState({});
   const [confirmed, setConfirmed] = React.useState(false);
   const [showTermsOfService, setShowTermsOfService] = React.useState(false);
   const [showReferrerDialog, setShowReferrerDialog] = React.useState(false);
   const [showTicketDialog, setShowTicketDialog] = React.useState(false);
+  const [showUnsupportedBrowserAlert, setShowUnsupportedBrowserAlert] =
+    React.useState(false);
+  const [showKeychainAlert, setShowKeychainAlert] = React.useState(true);
+
+  React.useEffect(() => {
+    if (isIOS && !isSafari) {
+      setShowUnsupportedBrowserAlert(true);
+    }
+  }, []);
 
   React.useEffect(() => {
     if (referrerAccount) {
       let referrerProfileCandidate = {};
 
       try {
-        const profileJSON = JSON.parse(referrerAccount.posting_json_metadata)
-          .profile;
+        const profileJSON = JSON.parse(
+          referrerAccount.posting_json_metadata
+        ).profile;
 
         referrerProfileCandidate.account = referrer;
 
@@ -153,8 +202,22 @@ const ChooseAccount = ({
           ]),
         });
 
-        analytics.logEvent("confirm_account_name");
-        setActiveStep(1);
+        if (ticket) {
+          setActiveStep(1);
+        } else {
+          checkReputation().then((result) => {
+            if (result.data.ticket && result.data.ticket !== "") {
+              if (result.data.ticket === "BADREPUTATION") {
+                setSuspended(true);
+              } else {
+                setTicket(result.data.ticket);
+              }
+            }
+            setActiveStep(1);
+          });
+        }
+
+        logEvent(analytics, "confirm_account_name");
       }
     },
   });
@@ -411,7 +474,137 @@ const ChooseAccount = ({
   return (
     <form className={classes.form} onSubmit={formik.handleSubmit}>
       <div>
-        <Grid container alignItems="center" justify="center" direction="row">
+        {showUnsupportedBrowserAlert && (
+          <Grid item xs={12}>
+            <Alert
+              className={classes.alertInfo}
+              severity="warning"
+              onClose={() => setShowKeychainAlert(false)}
+            >
+              <AlertTitle>
+                <b>Your iOS browser is not supported</b>
+              </AlertTitle>
+              <Box display="flex" p={1}>
+                <Box p={1} flexGrow={1}>
+                  <Typography>
+                    Because of restrictions from Apple to download files (Wallet
+                    Backup) using 3rd party browsers on iOS devices, your
+                    browser isn't supported.
+                    <b> Please use Safari browser in order to continue.</b>
+                  </Typography>
+                </Box>
+              </Box>
+            </Alert>
+          </Grid>
+        )}
+        {window.hive_keychain &&
+        window.hive_keychain.requestAddAccount &&
+        showKeychainAlert &&
+        (isChrome || isEdgeChromium || isFirefox) ? (
+          <Hidden xsDown>
+            <Grid item xs={12}>
+              <Alert
+                className={classes.alertInfo}
+                severity="success"
+                onClose={() => setShowKeychainAlert(false)}
+              >
+                <AlertTitle>
+                  <b>Hive Keychain Browser Extension detected</b>
+                </AlertTitle>
+                <Box display="flex" p={1}>
+                  <Box p={1}>
+                    <Typography>
+                      After signup you will be able to automatically import your
+                      account and keys into Keychain.
+                    </Typography>
+                  </Box>
+                </Box>
+              </Alert>
+            </Grid>
+          </Hidden>
+        ) : (
+          showKeychainAlert && (
+            <Hidden xsDown>
+              <Grid item xs={12}>
+                <Alert
+                  className={classes.alertInfo}
+                  severity="warning"
+                  onClose={() => setShowKeychainAlert(false)}
+                >
+                  <AlertTitle>
+                    <b>Use Hive Keychain Browser Extension</b>
+                  </AlertTitle>
+                  <Box display="flex" p={1}>
+                    <Box p={1} flexGrow={1}>
+                      <Typography>
+                        It's highly recommended to use the latest version of
+                        Hive Keychain Browser Extension which will act as your
+                        wallet and safe storage of your keys.
+                        <br />
+                        <br />
+                        If you download and install it <b>right now</b> we will
+                        automatically import your account and keys into Keychain
+                        at the end of signup.
+                      </Typography>
+                    </Box>
+                    <Box p={1}>
+                      <Typography align="center">
+                        <b>Install</b>
+                        <Button
+                          onClick={() =>
+                            logEvent(analytics, "open_browser_extension", {
+                              extension: "keychain",
+                            })
+                          }
+                          target="_blank"
+                          href={
+                            isFirefox
+                              ? "https://addons.mozilla.org/en-GB/firefox/addon/hive-keychain/"
+                              : "https://chrome.google.com/webstore/detail/hive-keychain/jcacnejopjdphbnjgfaaobbfafkihpep"
+                          }
+                          variant="contained"
+                          color="secondary"
+                          size="large"
+                          className={classes.button}
+                          startIcon={
+                            <Icon className={classes.iconRoot}>
+                              <img
+                                className={classes.imageIcon}
+                                src={keychain}
+                                alt="Keychain"
+                              />
+                            </Icon>
+                          }
+                        >
+                          Keychain
+                        </Button>
+                        <b>then</b>
+                      </Typography>
+                      <Button
+                        variant="contained"
+                        color="secondary"
+                        fullWidth
+                        onClick={() => {
+                          window.location.reload(false);
+                        }}
+                      >
+                        Reload Page
+                      </Button>
+                    </Box>
+                  </Box>
+                </Alert>
+              </Grid>
+            </Hidden>
+          )
+        )}
+      </div>
+      <div>
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <Grid item>
             <Button
               onClick={() => {
@@ -442,15 +635,38 @@ const ChooseAccount = ({
       </div>
       {!_.isEmpty(referrerAccount) && (
         <div>
-          <Typography variant="overline" display="block" align="center">
-            <b>Your Referrer</b>
-          </Typography>
-          <ProfileCard profile={referrerProfile} />
+          <Grid
+            container
+            alignItems="center"
+            justifyContent="center"
+            direction="row"
+          >
+            <Grid item>
+              {" "}
+              <Typography variant="overline" display="block" align="center">
+                <b>Your Referrer</b>
+                <Tooltip
+                  title="Your referrer will share 3% of your HIVE rewards by default. This can be changed or disabled anytime on HIVE interfaces, which support the referral system."
+                  placement="right"
+                >
+                  <IconButton>
+                    <HelpIcon />
+                  </IconButton>
+                </Tooltip>
+              </Typography>
+              <ProfileCard profile={referrerProfile} />
+            </Grid>
+          </Grid>
         </div>
       )}
       {!_.isEmpty(ticket) && ticket !== "invalid" && (
         <div>
-          <Grid container alignItems="center" justify="center" direction="row">
+          <Grid
+            container
+            alignItems="center"
+            justifyContent="center"
+            direction="row"
+          >
             <Tooltip
               title="This VIP Ticket allows you to bypass our verification process."
               placement="top"
@@ -467,7 +683,12 @@ const ChooseAccount = ({
       )}
       {!_.isEmpty(ticket) && ticket === "invalid" && (
         <div>
-          <Grid container alignItems="center" justify="center" direction="row">
+          <Grid
+            container
+            alignItems="center"
+            justifyContent="center"
+            direction="row"
+          >
             <Chip
               className={classes.chip}
               icon={<Icon>confirmation_number</Icon>}
@@ -478,7 +699,12 @@ const ChooseAccount = ({
         </div>
       )}
       <div>
-        <Grid container alignItems="center" justify="center" direction="row">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <TextField
             className={classes.textField}
             color={formik.errors.username ? "primary" : "secondary"}
@@ -518,7 +744,12 @@ const ChooseAccount = ({
             }}
           />
         </Grid>
-        <Grid container alignItems="center" justify="center" direction="row">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <Button onClick={() => setShowTermsOfService(true)}>
             Terms of Service
           </Button>
@@ -551,7 +782,12 @@ const ChooseAccount = ({
             </Button>
           </DialogActions>
         </Dialog>
-        <Grid container alignItems="center" justify="center" direction="row">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <FormGroup row>
             <FormControlLabel
               control={
@@ -574,10 +810,19 @@ const ChooseAccount = ({
         </Grid>
       </div>
       <div>
-        <Grid container alignItems="center" justify="center" direction="row">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <Button
             type="submit"
-            disabled={formik.isSubmitting || !confirmed ? true : false}
+            disabled={
+              formik.isSubmitting || !confirmed || showUnsupportedBrowserAlert
+                ? true
+                : false
+            }
             variant="contained"
             color="primary"
             className={classes.submit}
@@ -585,6 +830,9 @@ const ChooseAccount = ({
             Continue
           </Button>
         </Grid>
+        <Backdrop className={classes.backdrop} open={formik.isSubmitting}>
+          <CircularProgress color="inherit" />
+        </Backdrop>
       </div>
     </form>
   );

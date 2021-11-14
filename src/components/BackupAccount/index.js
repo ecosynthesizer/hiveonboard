@@ -1,6 +1,7 @@
 import React from "react";
-import * as firebase from "firebase/app";
-import "firebase/auth";
+import { RecaptchaVerifier, signInWithPhoneNumber } from "firebase/auth";
+import { httpsCallable } from "firebase/functions";
+import { logEvent } from "firebase/analytics";
 import { useAuth, useFunctions, useAnalytics } from "reactfire";
 import { makeStyles, useTheme } from "@material-ui/core/styles";
 import useMediaQuery from "@material-ui/core/useMediaQuery";
@@ -19,9 +20,13 @@ import DialogContentText from "@material-ui/core/DialogContentText";
 import DialogTitle from "@material-ui/core/DialogTitle";
 import Box from "@material-ui/core/Box";
 import TextField from "@material-ui/core/TextField";
+import FormGroup from "@material-ui/core/FormGroup";
+import FormControlLabel from "@material-ui/core/FormControlLabel";
+import Checkbox from "@material-ui/core/Checkbox";
 
 import PhoneInput from "react-phone-input-2";
 import "react-phone-input-2/lib/style.css";
+import { saveAs } from "file-saver";
 
 const useStyles = makeStyles((theme) => ({
   button: {
@@ -37,7 +42,7 @@ const useStyles = makeStyles((theme) => ({
   },
   textKeys: {
     fontFamily: "Monospace",
-    fontSize: 10,
+    fontSize: 9,
     margin: theme.spacing(0, 1, 0, 1),
   },
   paper: {
@@ -79,34 +84,38 @@ const BackupKeys = ({
   const functions = useFunctions();
   const analytics = useAnalytics();
   const [confirmed, setConfirmed] = React.useState(false);
+  const [backupConfirmed, setBackupConfirmed] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [submitting, setSubmitting] = React.useState(false);
   const [showDialog, setShowDialog] = React.useState(false);
+  const [showKeychainDialog, setShowKeychainDialog] = React.useState(false);
 
   const [phoneNumber, setPhoneNumber] = React.useState("");
   const [codeRequested, setCodeRequested] = React.useState(false);
   const [confirmationResult, setConfirmationResult] = React.useState(null);
   const [confirmationCode, setConfirmationCode] = React.useState("");
 
-  const createAccount = functions.httpsCallable("createAccount");
-
-  React.useEffect(() => {
-    initializeRecaptcha();
-  }, []);
+  const createAccount = httpsCallable(functions, "createAccount");
 
   const initializeRecaptcha = () => {
-    window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier(
+    window.recaptchaVerifier = new RecaptchaVerifier(
       "create-account",
       {
         size: "invisible",
         callback: function (response) {},
-      }
+      },
+      auth
     );
 
     window.recaptchaVerifier.render().then(function (widgetId) {
       window.recaptchaWidgetId = widgetId;
     });
   };
+
+  React.useEffect(() => {
+    initializeRecaptcha();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const accountString =
     `--------------- YOUR ACCOUNT -------------\n` +
@@ -130,12 +139,17 @@ const BackupKeys = ({
     `Be very careful directly using your keys on any other website or application.`;
 
   const downloadBackupFile = () => {
-    const element = document.createElement("a");
-    const file = new Blob([accountString], { type: "text/plain" });
-    element.href = URL.createObjectURL(file);
-    element.download = "HIVE-ACOUNT-" + account.username + "-BACKUP.txt";
-    document.body.appendChild(element);
-    element.click();
+    var blob = new Blob([accountString], { type: "text/plain;charset=utf-8" });
+    saveAs(blob, "HIVE-ACOUNT-" + account.username + "-BACKUP.txt");
+  };
+
+  const copyToClipboard = (text) => {
+    var textField = document.createElement("textarea");
+    textField.innerHTML = text;
+    document.body.appendChild(textField);
+    textField.select();
+    document.execCommand("copy");
+    textField.remove();
   };
 
   const closeDialog = () => {
@@ -148,20 +162,33 @@ const BackupKeys = ({
   };
 
   return (
-    <Grid container alignItems="center" justify="center" direction="column">
+    <Grid
+      container
+      alignItems="center"
+      justifyContent="center"
+      direction="column"
+    >
       <Grid item>
-        <Typography variant="h6">Welcome to HIVE!</Typography>
+        <Typography variant="h6">ALMOST THERE!</Typography>
         <Typography>
-          Congratulations, your account is almost ready!
+          This is your proposed account information.
           <br />
-          <br />
-          Your HIVE username, password and keys:
+          After you save this info your account will be created.
         </Typography>
       </Grid>
       <Grid item>
-        <Grid container alignItems="center" justify="center" direction="column">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="column"
+        >
           <Grid item>
-            <Paper className={classes.paper} elevation={3}>
+            <Paper
+              className={classes.paper}
+              elevation={3}
+              onClick={() => copyToClipboard(accountString)}
+            >
               <Typography className={classes.text}>
                 <b>Username: {account.username}</b>
               </Typography>
@@ -200,21 +227,17 @@ const BackupKeys = ({
         </Grid>
       </Grid>
       <Grid item>
-        <Alert className={classes.alert} severity="warning">
-          <AlertTitle>Please backup your account password and keys!</AlertTitle>
-          You can change your password later, but for now you have to keep it
-          safe. We don't offer account recovery yet, so be aware of the fact if
-          you lose your password, your account cannot be recovered.
-        </Alert>
-      </Grid>
-      <Grid item>
-        <Grid container alignItems="center" justify="center" direction="row">
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
           <Button
             variant="contained"
             color="primary"
-            disabled={confirmed ? true : false}
             onClick={() => {
-              analytics.logEvent("download_backup_file");
+              logEvent(analytics, "download_backup_file");
               downloadBackupFile();
               setConfirmed(true);
             }}
@@ -222,44 +245,40 @@ const BackupKeys = ({
           >
             Download Backup
           </Button>
+          <Box>OR</Box>
           <Button
-            disabled={!confirmed ? true : false}
             variant="contained"
             color="primary"
-            id="create-account"
             onClick={() => {
-              if (confirmed) {
-                if (debugMode) {
-                  setActiveStep(2);
-                } else if (ticket && ticket !== "invalid") {
-                  setSubmitting(true);
-                  createAccount({
-                    username: account.username,
-                    publicKeys: account.publicKeys,
-                    referrer: referrer,
-                    creator: creator,
-                    ticket: ticket,
-                  }).then(function (result) {
-                    if (result.data.hasOwnProperty("error")) {
-                      analytics.logEvent("create_account_error", {
-                        error: result.data.error,
-                      });
-                      setError(result.data.error);
-                      setSubmitting(false);
-                    } else {
-                      analytics.logEvent("create_account_success");
-                      setActiveStep(2);
-                    }
-                  });
-                } else {
-                  setShowDialog(true);
-                }
-              }
+              copyToClipboard(accountString);
+              setConfirmed(true);
             }}
             className={classes.button}
           >
-            Create HIVE Account
+            Copy to Clipboard
           </Button>
+          <Dialog
+            fullScreen={fullScreen}
+            maxWidth="xs"
+            open={showKeychainDialog}
+            aria-labelledby="alert-dialogKeychain-title"
+            aria-describedby="alert-dialogKeychain-description"
+            disableBackdropClick
+            disableEscapeKeyDown
+          >
+            <DialogTitle id="alert-dialogKeychain-title">
+              Add your account to Hive Keychain
+            </DialogTitle>
+            <DialogContent>
+              <DialogContentText id="alert-dialogKeychain-description">
+                Your Hive account was successfully created.
+                <br />
+                <br />
+                Please take a look at your Hive Keychain Addon and import your
+                account. You will automatically forwarded.
+              </DialogContentText>
+            </DialogContent>
+          </Dialog>
           <Dialog
             fullScreen={fullScreen}
             maxWidth="xs"
@@ -354,8 +373,7 @@ const BackupKeys = ({
                     setSubmitting(true);
                     let appVerifier = window.recaptchaVerifier;
 
-                    auth
-                      .signInWithPhoneNumber("+" + phoneNumber, appVerifier)
+                    signInWithPhoneNumber(auth, "+" + phoneNumber, appVerifier)
                       .then(function (result) {
                         // SMS sent. Prompt user to type the code from the message, then sign the
                         // user in with confirmationResult.confirm(code).
@@ -392,13 +410,13 @@ const BackupKeys = ({
                           creator: creator,
                         }).then(function (result) {
                           if (result.data.hasOwnProperty("error")) {
-                            analytics.logEvent("create_account_error", {
+                            logEvent(analytics, "create_account_error", {
                               error: result.data.error,
                             });
                             setError(result.data.error);
                             closeDialog();
                           } else {
-                            analytics.logEvent("create_account_success");
+                            logEvent(analytics, "create_account_success");
                             setActiveStep(2);
                           }
                         });
@@ -417,8 +435,145 @@ const BackupKeys = ({
             </DialogActions>
           </Dialog>
         </Grid>
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
+          <Alert className={classes.alert} severity="warning">
+            <AlertTitle>
+              <b>WHY DO I HAVE TO SAVE THIS INFO? </b>
+            </AlertTitle>
+            - Because no one can recover your account if you don't have this
+            info.
+            <br />
+            - If you loose these keys you will loose your account and any
+            currency in the account.
+            <br />
+            - These keys are how you will be able to sign in and use sites.
+            <br />
+            <br />
+            <b>SIGNING IN</b>
+            <br />
+            After this you are likely going to sign into a website using a login
+            software <br />
+            - The POSTING KEY can be used for login software like PeakLock and
+            the Hive Keychain browser extension <br />
+            - The ACTIVE KEY will help you login using HiveSigner software
+            <br />
+            <br />
+            You can change your password later, but for now you have to keep it
+            safe. We don't offer account recovery yet, so be aware of the fact
+            if you lose your password, your account cannot be recovered.
+          </Alert>
+          <FormGroup row>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  name="confirm_backup"
+                  checked={backupConfirmed}
+                  disabled={!confirmed}
+                  onClick={() => setBackupConfirmed(true)}
+                />
+              }
+              label={
+                "I (the soon to be owner of @" +
+                account.username +
+                ") declare that I understand the requirement of safely securing these private keys. I understand that neither HiveOnboard nor any other entity on this planet is capable of restoring or changing these keys if lost. Meaning I really did save these keys in a safe location that I will be able to find later."
+              }
+            />
+          </FormGroup>
+        </Grid>
+        <Grid
+          container
+          alignItems="center"
+          justifyContent="center"
+          direction="row"
+        >
+          <Button
+            disabled={!backupConfirmed ? true : false}
+            variant="contained"
+            color="primary"
+            id="create-account"
+            onClick={() => {
+              if (confirmed) {
+                if (debugMode) {
+                  if (
+                    window.hive_keychain &&
+                    window.hive_keychain.requestAddAccount
+                  ) {
+                    setShowKeychainDialog(true);
+                    window.hive_keychain.requestAddAccount(
+                      account.username,
+                      {
+                        active: account.privateKeys.active,
+                        posting: account.privateKeys.posting,
+                        memo: account.privateKeys.memo,
+                      },
+                      function () {
+                        setActiveStep(2);
+                      }
+                    );
+                  } else {
+                    setActiveStep(2);
+                  }
+                } else if (ticket && ticket !== "invalid") {
+                  setSubmitting(true);
+                  createAccount({
+                    username: account.username,
+                    publicKeys: account.publicKeys,
+                    referrer: referrer,
+                    creator: creator,
+                    ticket: ticket,
+                  }).then(function (result) {
+                    if (result.data.hasOwnProperty("error")) {
+                      logEvent(analytics, "create_account_error", {
+                        error: result.data.error,
+                      });
+                      setError(result.data.error);
+                      setSubmitting(false);
+                    } else {
+                      logEvent(analytics, "create_account_success");
+
+                      if (
+                        window.hive_keychain &&
+                        window.hive_keychain.requestAddAccount
+                      ) {
+                        setShowKeychainDialog(true);
+                        window.hive_keychain.requestAddAccount(
+                          account.username,
+                          {
+                            active: account.privateKeys.active,
+                            posting: account.privateKeys.posting,
+                            memo: account.privateKeys.memo,
+                          },
+                          function () {
+                            setActiveStep(2);
+                          }
+                        );
+                      } else {
+                        setActiveStep(2);
+                      }
+                    }
+                  });
+                } else {
+                  setShowDialog(true);
+                }
+              }
+            }}
+            className={classes.button}
+          >
+            Create HIVE Account
+          </Button>
+        </Grid>
         {error && (
-          <Grid container alignItems="center" justify="center" direction="row">
+          <Grid
+            container
+            alignItems="center"
+            justifyContent="center"
+            direction="row"
+          >
             <Alert
               className={classes.alert}
               severity="error"
@@ -426,6 +581,18 @@ const BackupKeys = ({
             >
               <AlertTitle>Account could not be created</AlertTitle>
               {error}
+              <br />
+              <br />
+              <b>
+                Please consider other Sign-up options at{" "}
+                <a
+                  target="_blank"
+                  href="https://signup.hive.io/"
+                  rel="noreferrer"
+                >
+                  https://signup.hive.io/
+                </a>
+              </b>
             </Alert>
           </Grid>
         )}
